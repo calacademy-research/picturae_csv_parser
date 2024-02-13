@@ -11,21 +11,22 @@ from taxon_parse_utils import *
 from gen_import_utils import *
 from string_utils import *
 from os import path
-from importer import Importer
 from sql_csv_utils import SqlCsvTools
 from specify_db import SpecifyDb
 import logging
-from gen_import_utils import read_json_config
+from gen_import_utils import read_json_config, get_first_digits_from_filepath
 from taxon_tools.BOT_TNRS import iterate_taxon_resolve
+from image_client import ImageClient
 starting_time_stamp = datetime.now()
 
 
-class CsvCreatePicturae(Importer):
+class CsvCreatePicturae:
     def __init__(self, date_string, config, logging_level):
         # self.paths = paths
+
         self.picturae_config = config
-        self.picdb_config = read_json_config(collection="picbatch")
-        super().__init__(db_config_class=self.picturae_config, collection_name="Botany")
+        self.specify_db_connection = SpecifyDb(self.picturae_config)
+        self.image_client = ImageClient(config=self.picturae_config)
         self.logger = logging.getLogger("CsvCreatePicturae")
         self.logger.setLevel(logging_level)
         self.init_all_vars(date_string)
@@ -41,13 +42,9 @@ class CsvCreatePicturae(Importer):
 
         # setting up alternate db connection for batch database
 
-        self.batch_db_connection = SpecifyDb(db_config_class=self.picdb_config)
-
         # setting up alternate csv tools connections
 
         self.sql_csv_tools = SqlCsvTools(config=self.picturae_config, logging_level=self.logger.getEffectiveLevel())
-
-        self.batch_sql_tools = SqlCsvTools(config=self.picdb_config, logging_level=self.logger.getEffectiveLevel())
 
 
         # intializing parameters for database upload
@@ -254,19 +251,18 @@ class CsvCreatePicturae(Importer):
 
         missing_rank_csv = self.record_full.loc[missing_rank]
 
-        if len(missing_rank_csv) > 0 :
+        if len(missing_rank_csv) > 0:
             missing_rank_csv = missing_rank_csv['folder_barcode']
 
             missing_rank_csv.drop_duplicates(inplace=True)
 
-            # self.monitoring_tools = MonitoringTools(config=self.picturae_config)
-            #
-            # self.monitoring_tools.send_missing_rank_report(batch_num="CP1_123456_BATCH_001",
-            #                                                time_stamp=starting_time_stamp, rank_csv=missing_rank_csv)
-
-            raise ValueError('Taxonomic name with 2 missing ranks')
+            raise ValueError("Taxonomic name with 2 missing ranks")
         else:
             self.logger.info('missing_rank empty: No corrections needed')
+
+
+
+
 
 
 
@@ -434,7 +430,7 @@ class CsvCreatePicturae(Importer):
         """checks if filepath barcode matches catalog number barcode
             just in case merge between folder and specimen level data was not clean"""
         self.record_full['file_path_digits'] = self.record_full['image_path'].apply(
-            lambda path: self.get_first_digits_from_filepath(path, field_size=9)
+            lambda path: get_first_digits_from_filepath(path, field_size=9)
         )
         self.record_full['is_barcode_match'] = self.record_full.apply(lambda row: row['file_path_digits'] ==
                                                                       row['CatalogNumber'].zfill(9),
@@ -501,9 +497,6 @@ class CsvCreatePicturae(Importer):
         # filtering out taxa without exact matches , saving to db table
 
         unmatched_taxa = resolved_taxon[resolved_taxon["overall_score"] < .99]
-
-        if len(unmatched_taxa) > 0:
-            self.batch_sql_tools.taxon_unmatch_insert(unmatched_taxa=unmatched_taxa)
 
         # filtering out taxa with tnrs scores lower than .99 (basically exact match)
         resolved_taxon = resolved_taxon[resolved_taxon["overall_score"] >= .99]
@@ -634,7 +627,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Runs checks on Picturae csvs and returns "
                                                  "wrangled csv ready for upload")
-    parser.add_argument("-d", "--date",nargs="?", required=True, help="date of batch to process")
+    parser.add_argument("-d", "--date", nargs="?", required=True, help="date of batch to process")
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: %(default)s)")

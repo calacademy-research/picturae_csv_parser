@@ -10,7 +10,7 @@ import hmac
 import settings
 import os
 import csv
-
+import re
 # import list tools
 
 def unique_ordered_list(input_list):
@@ -166,7 +166,20 @@ def generate_token(timestamp, filename):
     print(f"Generated new token for {filename} at {timestamp}.")
     return ':'.join((mac.hexdigest(), timestamp))
 
+class InvalidFilenameError(Exception):
+    pass
+
 def get_row_value_or_default(row, column_name, default_value=None):
     """used to return row values where column may or may not be present in dataframe"""
     return row[column_name] if column_name in row else default_value
 
+def get_first_digits_from_filepath(filepath, field_size=9):
+    basename = os.path.basename(filepath)
+    ints = re.findall(r'\d+', basename)
+    if len(ints) == 0:
+        raise InvalidFilenameError("Can't get barcode from filename")
+    int_digits = int(ints[0])
+    string_digits = f"{int_digits}"
+    string_digits = string_digits.zfill(field_size)
+    print(f"extracting digits from {filepath} to get {string_digits}")
+    return string_digits
