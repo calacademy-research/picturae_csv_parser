@@ -358,6 +358,8 @@ class CsvCreatePicturae:
         """parses and cleans dataframe columns until ready for upload.
             runs dependent function taxon concat
         """
+        # flagging taxons with multiple missing ranks
+        self.flag_missing_rank()
         self.record_full['verbatim_date'] = self.record_full['verbatim_date'].apply(replace_apostrophes)
         self.record_full['locality'] = self.record_full['locality'].apply(replace_apostrophes)
         date_col_list = ['start_date', 'end_date']
@@ -596,8 +598,6 @@ class CsvCreatePicturae:
         self.csv_merge()
         # renaming columns
         self.csv_colnames()
-        # flagging taxa with multiple missing ranks
-        self.flag_missing_rank()
         # cleaning data
         self.col_clean()
 

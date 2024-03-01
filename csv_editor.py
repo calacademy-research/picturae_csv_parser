@@ -3,12 +3,13 @@ from tkinter import ttk
 from tkinter import messagebox
 import csv
 
-class CSVEditorApp(tk.Tk):
-    def __init__(self, csv_path, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+class CSVEditorApp(tk.Frame):
+    def __init__(self, csv_path, parent, controller, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
         self.csv_path = csv_path
-        self.title("CSV Editor")
-        self.geometry("800x600")
+        self.parent = parent
+        self.controller = controller
+        # Removed the title and geometry settings as those apply to top-level windows
         self.edit_history = []
         self.tree = None
         self.load_csv()
@@ -56,11 +57,24 @@ class CSVEditorApp(tk.Tk):
 
         # Frame for Save Button
         self.save_button_frame = tk.Frame(self)
-        self.save_button_frame.pack(side=tk.BOTTOM, pady=5)
+        self.save_button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
 
-        # Save Button within the frame
-        self.save_button = ttk.Button(self.save_button_frame, text="Save", command=self.save_csv)
-        self.save_button.pack(pady=10)
+        # Inner frame to hold buttons and center them
+        self.inner_button_frame = tk.Frame(self.save_button_frame)
+        self.inner_button_frame.pack(expand=True, pady=10)
+
+        # Save Button within the inner frame
+        self.save_button = ttk.Button(self.inner_button_frame, text="Save", command=self.save_csv)
+        self.save_button.pack(side=tk.LEFT, padx=10, pady=10)
+
+        # New "Save and Continue" button
+        self.save_continue_button = ttk.Button(self.inner_button_frame, text="Save and Continue",
+                                               command=self.save_and_continue)
+        self.save_continue_button.pack(side=tk.LEFT, padx=10, pady=10)
+
+        # Exit Button within the inner frame
+        self.exit_button = ttk.Button(self.inner_button_frame, text="Exit", command=self.exit_program)
+        self.exit_button.pack(side=tk.LEFT, padx=10, pady=10)
 
         # undo ctrl z
         self.bind_all('<Control-z>', lambda event: self.undo_last_edit())
@@ -117,6 +131,7 @@ class CSVEditorApp(tk.Tk):
                 # Update the cell value and capture the edit for undo functionality
                 self.update_cell_value(row_id, column, new_value)
             entry_edit.destroy()
+
         def cancel_edit(event=None):
             entry_edit.destroy()
 
@@ -133,7 +148,7 @@ class CSVEditorApp(tk.Tk):
 
     def undo_last_edit(self):
         if self.edit_history:
-            # Pop the last edit from the history
+            # retrieve last edit from history
             row_id, column, old_value, _ = self.edit_history.pop()
             # Revert the cell to its old value
             self.tree.set(row_id, column, old_value)
@@ -152,8 +167,6 @@ class CSVEditorApp(tk.Tk):
         else:
             self.tree.xview_scroll(6, "units")  # Move right 3 units
 
-
-
     def save_csv(self):
         # Open the file in write mode
         with open(self.csv_path, 'w', newline='') as csvfile:
@@ -169,7 +182,19 @@ class CSVEditorApp(tk.Tk):
 
         messagebox.showinfo("Save", "Changes saved successfully!")
 
-# Example usage
-if __name__ == "__main__":
-    app = CSVEditorApp("picturae_csv/20230628/picturae_folder(20230628).csv")
-    app.mainloop()
+    def save_and_continue(self):
+        # Call the existing save logic
+        self.save_csv()
+        # Close the application window
+        self.controller.show_frame("CsvCreatePIC", callback=True)
+
+    def exit_program(self):
+        if messagebox.askyesno("Exit", "Are you sure you want to exit?"):
+            self.controller.destroy()
+
+
+
+        # Example usage
+# if __name__ == "__main__":
+#     app = CSVEditorApp("picturae_csv/20230628/picturae_folder(20230628).csv")
+#     app.mainloop()
