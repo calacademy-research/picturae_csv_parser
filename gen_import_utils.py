@@ -9,24 +9,9 @@ import json
 import hmac
 import settings
 import os
-import csv
+from string_utils import remove_non_numerics
 import re
 # import list tools
-
-def unique_ordered_list(input_list):
-    """unique_ordered_list:
-            takes a list and selects only unique elements,
-            while preserving order
-        args:
-            input_list: list which will be made to have
-                        only unique elements.
-    """
-    unique_elements = []
-    for element in input_list:
-        if element not in unique_elements:
-            unique_elements.append(element)
-    return unique_elements
-
 
 def set_slashes(path_string):
     """sets slashes in json to work on either ubuntu or windows"""
@@ -56,6 +41,9 @@ def extract_last_folders(path, number: int):
 
 def picturae_paths_list(config, date):
     """parses date arg into picturae image folder structure with prefixes"""
+
+    date = remove_non_numerics(date)
+
     date_folders = f"{int(date) // 10000}{os.path.sep}" \
                    f"{str(int(date) // 100 % 100).zfill(2)}{os.path.sep}" \
                    f"{str(int(date) % 100).zfill(2)}{os.path.sep}"

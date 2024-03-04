@@ -634,8 +634,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-
-
     pic_config = read_json_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, date_string=args.date, logging_level=args.log_level)
@@ -649,11 +647,7 @@ if __name__ == "__main__":
 #
 #     date_override = "20230628"
 #
-#     from gen_import_utils import picturae_paths_list
+#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config)
 #
-#     paths = picturae_paths_list(config=test_config, date=date_override)
-#
-#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config, paths=paths)
-#
-#
+# #
 # full_run()
