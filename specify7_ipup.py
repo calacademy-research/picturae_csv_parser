@@ -61,7 +61,7 @@ def master_run():
 
     ip_replace('server_host_settings.py')
 
-    ip_replace('config_collections.json')
+    ip_replace('config_files/botany_pic_config.py')
 
 # running master function
 master_run()

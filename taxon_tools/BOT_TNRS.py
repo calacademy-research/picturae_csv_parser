@@ -32,8 +32,6 @@ def iterate_taxon_resolve(taxon_frame):
 
 
 
-
-
 def process_taxon_resolve(taxon_frame):
     """process_taxon_resolve: uses TNRS or the taxonomic name resolution service
         to process, batches of taxonomic names, correct for spelling mistakes,
@@ -74,10 +72,12 @@ def process_taxon_resolve(taxon_frame):
     results_json = requests.post(url_tn, headers=headers, data=input_json.encode('utf-8'))
 
     results_raw = results_json.json()
+
+
     results = pd.DataFrame(results_raw)
 
     # Replacing empty strings with NaN
-    results['Overall_score'] = results['Overall_score'].replace('', pd.NA)
+    results['Overall_score'] = results['Overall_score'].replace('', 0)
 
     # Converting to float, handling non-convertible values by setting errors='coerce'
     results['match.score'] = pd.to_numeric(results['Overall_score'], errors='coerce').round(2).astype(str)

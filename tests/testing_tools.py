@@ -19,16 +19,20 @@ class TestingTools:
             with open(path, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
 
-                writer.writerow(['specimen_barcode', 'folder_barcode', 'path_jpg'])
+                writer.writerow(['SPECIMEN-BARCODE', 'FOLDER-BARCODE', 'PATH-JPG', 'SPECIMEN-BATCH', 'CSV-BATCH',
+                                 'NOTES', 'APPLICATION-ID', 'OBJECT-TYPE', 'APPLICATION-BATCH', 'FEEDBACK-ALEMBO',
+                                 'FEEDBACK-CALIFORNIA'])
                 for i in range(num_records):
                     # to keep barcodes matching between folder and specimen csvs for merging
                     ordered_bar = 123456
                     specimen_bar = ordered_bar + i
                     # populating rest of columns with random data
-                    folder_barcode = fake.random_number(digits=6)
+                    folder_barcode = "CAS_" + f"{ordered_bar + i}"
+                    filler_list = ["abcdefg"] * 8
                     jpg_path = fake.file_path(depth=random.randint(1, 5), category='image', extension='jpg')
                     # writing data to CSV
-                    writer.writerow([specimen_bar, folder_barcode, jpg_path])
+                    row_list= [specimen_bar, folder_barcode, jpg_path] + filler_list
+                    writer.writerow(row_list)
             print(f"Fake dataset {path} with {num_records} records created successfully")
 
     def create_test_images(self, barcode_list: list, color: str, expected_dir: str):

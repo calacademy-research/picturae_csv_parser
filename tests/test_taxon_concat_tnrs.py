@@ -12,35 +12,35 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
     def setUp(self):
         """creates fake taxon columns in
            dummy dataset to test out taxon_concat string output"""
-        self.test_csv_create_picturae = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
+        self.test_csv_pic = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
 
         # jose Gonzalez is a real agent,
         # to make sure true matches are not added to list.
         # abies balsamea given incorrect placeholder rank "subsp." instead of "var."
         # to test if correct taxonomic id is filled in post-tnrs
         data = {'CatalogNumber': [12345, 12346, 12347, 12348, 12349],
-                'fulltaxon':['x Serapicamptis', 'Castilleja miniata subsp. dixonii var. fake x fakeus',
-                             'Rafflesia arnoldi var. arjehensis', 'Castilloja Moniata',
-                             'Abies balsamea subsp. balsamea'],
-                'taxon_id': [None, None, None, None, None],
+                'fulltaxon': ['x Serapicamptis', 'Castilleja miniata subsp. dixonii var. fake x fakeus',
+                              'Rafflesia arnoldi var. arjehensis', 'Castilloja Moniata',
+                              'Abies balsamea subsp. balsamea'],
+                'taxon_id': ['', '', '', '', ''],
                 'Genus': ['x Serapicamptis', 'Castilleja', 'Rafflesia', 'Castilloja', 'Abies'],
-                'Species': [pd.NA, 'miniata', 'arnoldi', 'Moniata', 'balsamea'],
-                'Rank 1': [pd.NA, 'subsp.', 'var.', pd.NA, 'subsp.'],
-                'Epithet 1': [pd.NA, 'dixonii', 'atjehensis', pd.NA, 'balsamea'],
-                'Rank 2': [pd.NA, 'var.', pd.NA, pd.NA, pd.NA],
-                'Epithet 2': [pd.NA, 'fake x fakeus', pd.NA, pd.NA, pd.NA],
+                'Species': ['', 'miniata', 'arnoldi', 'Moniata', 'balsamea'],
+                'Rank 1': ['', 'subsp.', 'var.', '', 'subsp.'],
+                'Epithet 1': ['', 'dixonii', 'atjehensis', '', 'balsamea'],
+                'Rank 2': ['', 'var.', '', '', ''],
+                'Epithet 2': ['', 'fake x fakeus', '', '', ''],
                 'Hybrid': [True, True, False, False, False],
                 'missing_rank': [False, False, False, False, True]
                 }
 
-        self.test_csv_create_picturae.record_full = pd.DataFrame(data)
+        self.test_csv_pic.record_full = pd.DataFrame(data)
 
     def test_taxon_concat_string(self):
         """tests whether correct full taxon name string is returned from taxon_concat"""
         temp_taxon_list = []
-        for index, row in self.test_csv_create_picturae.record_full.iterrows():
-            self.test_csv_create_picturae.taxon_concat(row)
-            temp_taxon_list.extend(self.test_csv_create_picturae.taxon_concat(row))
+        for index, row in self.test_csv_pic.record_full.iterrows():
+            self.test_csv_pic.taxon_concat(row)
+            temp_taxon_list.extend(self.test_csv_pic.taxon_concat(row))
         self.assertEqual(temp_taxon_list[0], 'x Serapicamptis')
         self.assertEqual(temp_taxon_list[3], 'x Serapicamptis')
         self.assertEqual((temp_taxon_list[5]), 'Castilleja miniata')
@@ -57,19 +57,21 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
     def test_check_taxon_real(self):
         """tests the TNRS name resolution service in the check_taxon_real function"""
 
-        self.test_csv_create_picturae.record_full[['gen_spec', 'fullname',
+        self.test_csv_pic.record_full[['gen_spec', 'fullname',
                                                    'first_intra',
                                                    'taxname', 'hybrid_base']] = \
-            self.test_csv_create_picturae.record_full.apply(self.test_csv_create_picturae.taxon_concat, axis=1,
+            self.test_csv_pic.record_full.apply(self.test_csv_pic.taxon_concat, axis=1,
                                                             result_type='expand')
 
-        self.test_csv_create_picturae.taxon_check_tnrs()
+        self.test_csv_pic.taxon_check_tnrs()
         # assert statements
-        self.assertEqual(len(self.test_csv_create_picturae.record_full.columns), 18)
+        self.assertEqual(len(self.test_csv_pic.record_full.columns), 19)
 
         # 3 rows left as the genus level hybrid Serapicamptis and the mispelled "Castilloja" should fail
 
-        self.assertEqual(len(self.test_csv_create_picturae.record_full), 3)
+        passed_score = self.test_csv_pic.record_full[self.test_csv_pic.record_full['overall_score'] >= .99]
+
+        self.assertEqual(len(passed_score), 3)
 
 
 
@@ -77,18 +79,18 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
         """tests whether post-TNRS, that a taxonomic name with a missing or incorrect rank,
             with update the taxon_id to that of the corrected taxonomic name."""
 
-        self.test_csv_create_picturae.record_full[['gen_spec', 'fullname',
+        self.test_csv_pic.record_full[['gen_spec', 'fullname',
                                                    'first_intra',
                                                    'taxname', 'hybrid_base']] = \
-            self.test_csv_create_picturae.record_full.apply(self.test_csv_create_picturae.taxon_concat, axis=1,
+            self.test_csv_pic.record_full.apply(self.test_csv_pic.taxon_concat, axis=1,
                                                             result_type='expand')
 
-        self.test_csv_create_picturae.taxon_check_tnrs()
+        self.test_csv_pic.taxon_check_tnrs()
 
         # assert that correct taxonomic id was filled in for Abies balsamea var. balsamea
-        self.assertEqual(self.test_csv_create_picturae.record_full.iloc[2, 2], 128210)
+        self.assertEqual(self.test_csv_pic.record_full.iloc[4, 2], 128210)
 
-        self.assertTrue('name_matched' in self.test_csv_create_picturae.record_full.columns,
+        self.assertTrue('name_matched' in self.test_csv_pic.record_full.columns,
                         "does not contain name_matched")
 
 
@@ -117,5 +119,5 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
 
     def tearDown(self):
         """deleting instance of PicturaeImporter"""
-        del self.test_csv_create_picturae
+        del self.test_csv_pic
 

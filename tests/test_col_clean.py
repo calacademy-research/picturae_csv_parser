@@ -14,40 +14,43 @@ class ColNamesTest(unittest.TestCase, TestingTools):
         self.test_csv_create_picturae = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
         # creating dummy dataset
         numb_range = list(range(1, 101))
-        column_names = ['application_batch', 'csv_batch', 'object_type', 'folder_barcode',
-                        'specimen_barcode', 'filed_as_family', 'barcode_info', 'path_jpg',
-                        'Taxon ID', 'Family', 'Genus', 'Species', 'Qualifier', 'Author',
-                        'Rank1', 'Epithet 1', 'Rank 2', 'Epithet 2', 'Rank 2.1', 'Epithet 2.1',
-                        'Hybrid', 'Hybrid Genus', 'Hybrid Species', 'Hybrid Rank 1',
-                        'Hybrid Epithet 1', 'Hybrid Level',
-                        'collector_number', 'collector_first_name 1', 'collector_middle_name 1',
-                        'collector_last_name 1', 'collector_first_name 2',
-                        'collector_middle_name 2', 'collector_last_name 2',
-                        'collector_first_name 3', 'collector_middle_name 3',
-                        'collector_last_name 3', 'collector_first_name 4',
-                        'collector_middle_name 4', 'collector_last_name 4',
-                        'collector_first_name 5', 'collector_middle_name 5',
-                        'collector_last_name 5', 'Country', 'State', 'County', 'Locality',
-                        'Verbatim Date', 'Start Date', 'End Date']
-        new_df = {column_names[i]: numb_range for i in range(49)}
+        column_names = ['CSV-BATCH', 'FOLDER-BARCODE',
+                        'SPECIMEN-BARCODE', 'PATH-JPG',
+                        'LABEL-IS-MOSTLY-HANDWRITTEN',
+                        'TAXON_ID', 'GENUS', 'SPECIES', 'QUALIFIER',
+                        'RANK-1', 'EPITHET-1', 'RANK-2', 'EPITHET-2',
+                        'cover_notes',
+                        'HYBRID', 'AUTHOR',
+                        'COLLECTOR-NUMBER', 'COLLECTOR-ID-1', 'COLLECTOR-FIRST-NAME-1',
+                        'COLLECTOR-MIDDLE-NAME-1', 'COLLECTOR-LAST-NAME-1',
+                        'COLLECTOR-ID-2', 'COLLECTOR-FIRST-NAME-2',
+                        'COLLECTOR-MIDDLE-NAME-2', 'COLLECTOR-LAST-NAME-2',
+                        'COLLECTOR-ID-3', 'COLLECTOR-FIRST-NAME-3',
+                        'COLLECTOR-MIDDLE-NAME-3', 'COLLECTOR-LAST-NAME-3',
+                        'COLLECTOR-ID-4', 'COLLECTOR-FIRST-NAME-4',
+                        'COLLECTOR-MIDDLE-NAME-4', 'COLLECTOR-LAST-NAME-4',
+                        'COLLECTOR-ID-5', 'COLLECTOR-FIRST-NAME-5',
+                        'COLLECTOR-MIDDLE-NAME-5', 'COLLECTOR-LAST-NAME-5',
+                        'LOCALITY-ID', 'COUNTRY', 'STATE-LOCALITY', 'COUNTY',
+                        'PRECISE-LOCALITY', 'VERBATIM-DATE',
+                        'START-DATE-MONTH', 'START-DATE-DAY', 'START-DATE-YEAR',
+                        'END-DATE-MONTH', 'END-DATE-DAY', 'END-DATE-YEAR',
+                        'sheet_notes']
 
-        # adding in fake notes and feedback columns,
-        # so they can be filtered without raise.
-        new_df['Notes'] = pd.NA
-        new_df['Feedback'] = pd.NA
+        new_df = {column_names[i]: numb_range for i in range(49)}
 
         self.test_csv_create_picturae.record_full = pd.DataFrame(new_df)
 
     def test_if_id_cols(self):
         """test_if_id_col: tests whether certain essential
-           ID columns present. Also tests, wether name columns correctly
+           ID columns present. Also tests, whether name columns correctly
            reformated
         """
         self.test_csv_create_picturae.csv_colnames()
         csv_columns = self.test_csv_create_picturae.record_full.columns
-        column_names = ['collector_number', 'RankID',
-                        'CatalogNumber', 'collector_last_name1',
-                        'collector_first_name5']
+        column_names = ['collector_number', 'taxon_id',
+                        'CatalogNumber', 'image_path',
+                        'locality_id']
         self.assertTrue(all(column in csv_columns for column in column_names))
 
     def test_if_nas(self):

@@ -3,13 +3,13 @@ import shutil
 import os
 from tests.pic_csv_test_class import AltCsvCreatePicturae
 from tests.testing_tools import TestingTools
-from gen_import_utils import read_json_config
+from get_configs import get_config
 
 class DirectoryTests(unittest.TestCase, TestingTools):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.md5_hash = self.generate_random_md5()
-        self.picturae_config = read_json_config(collection="Botany_PIC")
+        self.picturae_config = get_config(config="Botany_PIC")
 
     """WorkingDirectoryTests: a series of unit tests to verify
         correct working directory, subdirectories."""
@@ -23,14 +23,14 @@ class DirectoryTests(unittest.TestCase, TestingTools):
             pass
         else:
             # create test directories
+            self.dir_path = self.picturae_config.DATA_FOLDER + f"{self.md5_hash}"
 
-            expected_folder_path = self.picturae_config['DATA_FOLDER'] + f"{self.md5_hash}" + \
-                                   self.picturae_config['CSV_FOLD'] + \
-                                   f"{self.md5_hash}" + ").csv"
+            expected_folder_path = self.dir_path + \
+                                   self.picturae_config.CSV_FOLD + f"{self.md5_hash}" + "_BATCH_0001.csv"
 
-            expected_specimen_path = self.picturae_config['DATA_FOLDER'] + f"{self.md5_hash}" + \
-                                     self.picturae_config['CSV_SPEC'] + \
-                                     f"{self.md5_hash}" + ").csv"
+            expected_specimen_path = self.dir_path + \
+                                     self.picturae_config.CSV_SPEC + f"{self.md5_hash}" + "_BATCH_0001.csv"
+
 
             # making the directories
             os.makedirs(os.path.dirname(expected_folder_path), exist_ok=True)
@@ -60,8 +60,7 @@ class DirectoryTests(unittest.TestCase, TestingTools):
         """test_raise_specimen: tests whether correct value
            error is raised for missing specimen_csv"""
         # removing test path specimen
-        os.remove('picturae_csv/' + str(self.md5_hash) + '/picturae_specimen(' +
-                  str(self.md5_hash) + ').csv')
+        os.remove(self.dir_path + self.picturae_config.CSV_SPEC + f"{self.md5_hash}" + "_BATCH_0001.csv")
         with self.assertRaises(ValueError) as cm:
             self.test_csv_create_picturae.file_present()
         self.assertEqual(str(cm.exception), "Specimen csv does not exist")
@@ -70,8 +69,7 @@ class DirectoryTests(unittest.TestCase, TestingTools):
         """test_raise_folder: tests whether correct value error
            is raised for missing folder_csv"""
         # removing test path folder
-        os.remove('picturae_csv/' + str(self.md5_hash) + '/picturae_folder(' +
-                  str(self.md5_hash) + ').csv')
+        os.remove(self.dir_path + self.picturae_config.CSV_FOLD + f"{self.md5_hash}" + "_BATCH_0001.csv")
         with self.assertRaises(ValueError) as cm:
             self.test_csv_create_picturae.file_present()
         self.assertEqual(str(cm.exception), "Folder csv does not exist")
@@ -89,9 +87,8 @@ class DirectoryTests(unittest.TestCase, TestingTools):
             del self.test_csv_create_picturae
             # create test directories
 
-            expected_folder_path = self.picturae_config['DATA_FOLDER'] + f"{self.md5_hash}" + \
-                                   self.picturae_config['CSV_FOLD'] + \
-                                   f"{self.md5_hash}" + ").csv"
+            expected_folder_path = self.dir_path + \
+                                   self.picturae_config.CSV_FOLD + f"{self.md5_hash}" + "_BATCH_0001.csv"
 
             shutil.rmtree(os.path.dirname(expected_folder_path))
 
