@@ -180,10 +180,6 @@ class ImageClient:
         else:
             return None
 
-
-
-
-
     def decode_response(self, params):
         url = self.build_url("getImageRecord")
         r = requests.get(url, params=params)

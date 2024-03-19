@@ -33,7 +33,7 @@ ipython~=8.10.0
 pip~=23.3.2
 panel~=0.14.3
 wheel~=0.38.4
-cryptography~=41.0.6
+cryptography~=42.0.5
 docutils~=0.18.1
 sphinx~=5.0.2
 tornado~=6.1
@@ -54,6 +54,5 @@ chardet~=4.0.0
 zipp~=3.11.0
 pandas~=1.5.3
 faker~=18.11.2
-testfixtures
-TkinterDnD2
-tkinter
+testfixtures=8.1.0
+TkinterDnD~=0.3.0

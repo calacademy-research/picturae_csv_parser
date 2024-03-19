@@ -141,8 +141,6 @@ class SqlCsvTools:
 
 
 
-
-
     def get_one_match(self, tab_name, id_col, key_col, match, match_type=str):
         """populate_sql:
                 creates a custom select statement for get one record,
@@ -248,8 +246,8 @@ class SqlCsvTools:
                       f"{time_stamp_list[0]}",
                       f"{time_stamp_list[1]}",
                       f"{batch_size}",
-                      f"{self.config['AGENT_ID']}",
-                      f"{self.config['AGENT_ID']}"
+                      f"{self.config.AGENT_ID}",
+                      f"{self.config.AGENT_ID}"
                       ]
 
         value_list, column_list = remove_two_index(value_list, column_list)
@@ -267,8 +265,10 @@ class SqlCsvTools:
                 val_list: list of values with which to update above list of columns(order matters)
                 condition: condition sql string used to select sub-sect of records to update.
         """
+        val_list, col_list = remove_two_index(value_list=val_list, column_list=col_list)
+
         update_string = f''' SET TimestampModified = "{time_utils.get_pst_time_now_string()}", 
-                            ModifiedByAgentID = "{self.config["AGENT_ID"]}",'''
+                            ModifiedByAgentID = "{self.config.AGENT_ID}",'''
         for index, column in enumerate(col_list):
             if isinstance(val_list[index], str):
                 update_string += " " + f'''{column} = "{val_list[index]}",'''
@@ -284,28 +284,6 @@ class SqlCsvTools:
 
         return sql
 
-    def taxon_unmatch_insert(self, unmatched_taxa: pd.DataFrame):
-        """taxon_unmatch_create: creates sql query for creating new records in taxa unmatch,
-                                from rows that did not pass TNRS successfully,
-                                either through spelling, or taxonomic errors.
-            args:
-                unmatched_taxa: a pandas dataframe with unmatched taxa terms filtered by score
-        """
-        unmatched_taxa = unmatched_taxa.applymap(string_utils.replace_apostrophes)
-        self.logger.info("uploading unmatched taxa")
-        for index, row in unmatched_taxa.iterrows():
-            catalognumber = unmatched_taxa.columns.get_loc("CatalogNumber")
-
-            sql = self.create_tnrs_unmatch_tab(row=row, df=unmatched_taxa, tab_name='taxa_unmatch')
-
-            sql_result = self.get_one_match(tab_name='taxa_unmatch',
-                                            id_col='CatalogNumber', key_col='CatalogNumber',
-                                            match=row[catalognumber], match_type=int)
-            if sql_result is None:
-                self.insert_table_record(sql=sql)
-            else:
-                pass
-
     def taxon_get(self, name, hybrid=False, taxname=None):
 
         if hybrid is False:
@@ -316,56 +294,6 @@ class SqlCsvTools:
             result_id = self.get_one_hybrid(match=taxname, fullname=name)
 
             return result_id
-
-
-    def create_tnrs_unmatch_tab(self, row, df, tab_name: str):
-        """create_unmatch_tab: function used to insert
-            unmatched TNRS taxas into the
-            taxa_unmatch table on the Database,
-            so that a more trained eye can diagnose,
-            and resolve some of the edge cases.
-
-        args:
-            row: row of unmatched taxon table, through which this function will itterate.
-            df: dataframe input in order to get column numbers
-            tab_name: name of mysql database table in which to input records.
-        """
-        columns = df.columns
-        fullname = columns.get_loc('fullname')
-        name_matched = columns.get_loc('name_matched')
-        accepted_author = columns.get_loc('accepted_author')
-        overall_score = columns.get_loc('overall_score')
-        unmatched_terms = columns.get_loc('unmatched_terms')
-        catalog_number = columns.get_loc('CatalogNumber')
-
-        col_list = ["fullname",
-                    "TimestampCreated",
-                    "TimestampModified",
-                    "name_matched",
-                    "unmatched_terms",
-                    "author",
-                    "overall_score",
-                    "CatalogNumber",
-                    "CreatedByAgentID",
-                    "ModifiedByAgentID"]
-
-        val_list = [f"{row[fullname]}",
-                    f"{time_utils.get_pst_time_now_string()}",
-                    f"{time_utils.get_pst_time_now_string()}",
-                    f"{row[name_matched]}",
-                    f"{row[unmatched_terms]}",
-                    f"{row[accepted_author]}",
-                    f"{row[overall_score]}",
-                    f"{row[catalog_number]}",
-                    f"{self.config['AGENT_ID']}",
-                    f"{self.config['AGENT_ID']}"]
-
-        val_list, col_list = remove_two_index(val_list, col_list)
-
-        sql = self.create_insert_statement(tab_name=tab_name, col_list=col_list,
-                                           val_list=val_list)
-
-        return sql
 
     def insert_taxa_added_record(self, taxon_list, df: pd.DataFrame):
         """new_taxa_record: creates record level data for any new taxa added to the database,
@@ -422,8 +350,8 @@ class SqlCsvTools:
                     f"{row[family]}",
                     f"{row[taxname]}",
                        row[hybrid],
-                    f"{self.config['AGENT_ID']}",
-                    f"{self.config['AGENT_ID']}"]
+                    f"{self.config.AGENT_ID}",
+                    f"{self.config.AGENT_ID}"]
 
 
 

@@ -4,9 +4,6 @@
    to catch spelling mistakes, mis-transcribed taxa.
    Source for taxon names at IPNI (International Plant Names Index): https://www.ipni.org/ """
 import argparse
-
-import pandas as pd
-
 from taxon_parse_utils import *
 from gen_import_utils import *
 from string_utils import *
@@ -14,33 +11,53 @@ from os import path
 from sql_csv_utils import SqlCsvTools
 from specify_db import SpecifyDb
 import logging
-from gen_import_utils import read_json_config, get_first_digits_from_filepath
+from get_configs import get_config
 from taxon_tools.BOT_TNRS import iterate_taxon_resolve
 from image_client import ImageClient
 starting_time_stamp = datetime.now()
 
+class IncorrectTaxonError(Exception):
+    pass
+
+class InvalidFilenameError(Exception):
+    pass
+
 
 class CsvCreatePicturae:
-    def __init__(self, date_string, config, logging_level):
+    def __init__(self, date_string, config, tnrs_ignore, logging_level):
         # self.paths = paths
-
+        self.tnrs_ignore = tnrs_ignore
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
         self.image_client = ImageClient(config=self.picturae_config)
         self.logger = logging.getLogger("CsvCreatePicturae")
         self.logger.setLevel(logging_level)
+
         self.init_all_vars(date_string)
 
         self.run_all()
+
+    def get_first_digits_from_filepath(self, filepath, field_size=9):
+        basename = os.path.basename(filepath)
+        ints = re.findall(r'\d+', basename)
+        if len(ints) == 0:
+            raise InvalidFilenameError("Can't get barcode from filename")
+        int_digits = int(ints[0])
+        string_digits = f"{int_digits}"
+        string_digits = string_digits.zfill(field_size)
+        self.logger.debug(f"extracting digits from {filepath} to get {string_digits}")
+        return string_digits
 
     def init_all_vars(self, date_string):
         """init_all_vars:to use for testing and decluttering init function,
                             initializes all class level variables  """
         self.date_use = date_string
 
-        self.path_prefix = picturae_paths_list(config=self.picturae_config, date=self.date_use)
+        self.dir_path = self.picturae_config.DATA_FOLDER + f"{self.date_use}"
 
-        # setting up alternate db connection for batch database
+
+        self.path_prefix = self.picturae_config.PREFIX + f"CP1_{self.date_use}_BATCH_0001" \
+                                                         f"{path.sep}undatabased{path.sep}"
 
         # setting up alternate csv tools connections
 
@@ -71,16 +88,14 @@ class CsvCreatePicturae:
 
         to_current_directory()
 
-        dir_path = self.picturae_config['DATA_FOLDER'] + f"{self.date_use}"
-
-        dir_sub = os.path.isdir(dir_path)
+        dir_sub = os.path.isdir(self.dir_path)
 
         if dir_sub is True:
-            folder_path = self.picturae_config['DATA_FOLDER'] + f"{self.date_use}" + \
-                          self.picturae_config['CSV_FOLD'] + f"{self.date_use}" + ").csv"
+            folder_path = self.dir_path + \
+                          self.picturae_config.CSV_FOLD + f"{self.date_use}" + "_BATCH_0001.csv"
 
-            specimen_path = self.picturae_config['DATA_FOLDER'] + f"{self.date_use}" + \
-                            self.picturae_config['CSV_SPEC'] + f"{self.date_use}" + ").csv"
+            specimen_path = self.dir_path + \
+                            self.picturae_config.CSV_SPEC + f"{self.date_use}" + "_BATCH_0001.csv"
 
             if os.path.exists(folder_path):
                 print("Folder csv exists!")
@@ -94,45 +109,35 @@ class CsvCreatePicturae:
         else:
             raise ValueError(f"subdirectory for {self.date_use} not present")
 
-
     def csv_read_path(self, csv_level: str):
         """csv_read_path:
                 reads in csv data for given date self.date_use
         args:
             folder_string: denotes whether specimen or folder level data with "folder" or "specimen"
         """
-
-        csv_path = f'picturae_csv{path.sep}' + str(self.date_use) + f'{path.sep}picturae_' + str(csv_level) + \
-                   f'({str(self.date_use)}).csv'
+        if csv_level == "COVER":
+            csv_path = self.dir_path + \
+                       self.picturae_config.CSV_FOLD + f"{self.date_use}" + "_BATCH_0001.csv"
+        elif csv_level == "SHEET":
+            csv_path = self.dir_path + \
+                       self.picturae_config.CSV_SPEC + f"{self.date_use}" + "_BATCH_0001.csv"
+        else:
+            raise InvalidFilenameError(f"No csv path exists for level {csv_level}")
 
         import_csv = pd.read_csv(csv_path)
 
         return import_csv
 
+    def drop_common_columns(self, csv: pd.DataFrame, folder = False):
+        """drops columns duplicate between sheet and cover csvs"""
 
-    # note: change to merging on folder barcode once real data recieved
+        drop_list = ['APPLICATION-ID', 'OBJECT-TYPE', 'APPLICATION-BATCH', 'FEEDBACK-ALEMBO', 'FEEDBACK-CALIFORNIA']
+        if folder is True:
+            drop_list = drop_list + ['SPECIMEN-BARCODE', 'PATH-JPG', 'CSV-BATCH']
 
-    def linking_csv_clean(self):
-        """linking_csv_clean: function used to reformat the picturae linking csvs inta a useable format,
-                                to link the specimen and folder csvs."""
-        csv_path = f'picturae_csv{path.sep}' + str(self.date_use) + f'{path.sep}picturae_merge' + \
-                   f'({str(self.date_use)}).csv'
+        csv.drop(columns=drop_list, inplace=True)
 
-        column_names = ['type', 'folder', 'specimen_barcode', 'Family', 'barcode2', 'timestamp', 'image_path']
-
-        merge_csv = pd.read_csv(csv_path, header=None)
-
-        merge_csv.columns = column_names
-
-        drop_columns = ['barcode2', 'timestamp', 'image_path', 'Family', 'type']
-
-        merge_csv.drop(columns=drop_columns, inplace=True)
-
-        merge_csv = merge_csv[~merge_csv['barcode'].str.contains("Cover")]
-
-        return merge_csv
-
-
+        return csv
 
 
     def csv_merge(self):
@@ -142,105 +147,111 @@ class CsvCreatePicturae:
                 fold_csv: folder level csv to be input as argument for merging
                 spec_csv: specimen level csv to be input as argument for merging
         """
-        fold_csv = self.csv_read_path(csv_level="folder")
-        spec_csv = self.csv_read_path(csv_level="specimen")
+        fold_csv = self.csv_read_path(csv_level="COVER")
+        spec_csv = self.csv_read_path(csv_level="SHEET")
 
-        ## uncomment when real data recieved
-        # merge_csv = self.linking_csv_clean()
-        # spec_csv = pd.merge(merge_csv, spec_csv, on='specimen_barcode')
-        #
-        # merge_len = len(spec_csv)
-        #
-        # spec_csv.drop_duplicates(inplace=True)
-        #
-        # unique_len = len(spec_csv)
-        #
-        # if merge_len > unique_len:
-        #     raise ValueError(f"merge produced {merge_len - unique_len} duplicate records")
+        self.drop_common_columns(fold_csv, folder=True)
 
+        self.drop_common_columns(spec_csv)
 
-        # is_duplicate = spec_csv['Notes'].str.contains('\d', regex=True)
-        #
-        # spec_csv.loc[is_duplicate, 'CatalogNumber'] = spec_csv.loc[is_duplicate, 'Notes'].apply(remove_non_numerics)
+        difference = set(fold_csv['FOLDER-BARCODE']) - set(spec_csv['FOLDER-BARCODE'])
 
+        if len(difference) > 0:
+            self.logger.warning(f"Following folder barcode not in specimen csv {difference}")
 
+        self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
 
+        self.record_full.fillna('', inplace=True)
 
+        self.record_full.rename(columns={"NOTES_x": "cover_notes", "NOTES_y": "sheet_notes"}, inplace=True)
 
-        # checking if columns to merge contain same data
-        if (set(fold_csv['specimen_barcode']) == set(spec_csv['specimen_barcode'])) is True:
-            # removing duplicate columns
+        # replacing duplicate barcodes with barcodes from notes section:
+        is_duplicate = self.record_full['sheet_notes'].str.contains('\d', regex=True)
 
-            common_columns = list(set(fold_csv.columns).intersection(set(spec_csv.columns)))
+        self.record_full.loc[is_duplicate, 'SPECIMEN-BARCODE'] = self.record_full.loc[
+            is_duplicate, 'sheet_notes'].apply(remove_non_numerics)
 
-            common_columns.remove('specimen_barcode')
+        merge_len = len(self.record_full)
 
-            spec_csv = spec_csv.drop(common_columns, axis=1)
+        self.record_full = self.record_full.drop_duplicates()
 
-            # completing merge on barcode
+        unique_len = len(self.record_full)
 
-            self.record_full = pd.merge(fold_csv, spec_csv,
-                                        on='specimen_barcode', how='inner')
+        if merge_len > unique_len:
+            raise ValueError(f"merge produced {merge_len-unique_len} duplicate records")
 
-            merge_len = len(self.record_full)
-
-            self.record_full = self.record_full.drop_duplicates()
-
-            unique_len = len(self.record_full)
-
-            if merge_len > unique_len:
-                raise ValueError(f"merge produced {merge_len-unique_len} duplicate records")
-
-        else:
-            raise ValueError("Barcode Columns do not match!")
 
     def csv_colnames(self):
         """csv_colnames: function to be used to rename columns to DB standards.
            args:
                 none"""
-        # remove columns !! review when real dataset received
 
-        cols_drop = ['application_batch', 'csv_batch', 'object_type', 'filed_as_family',
-                     'barcode_info', 'Notes', 'Feedback']
-
-        self.record_full = self.record_full.drop(columns=cols_drop)
-
-        # some of these are just placeholders for now
-
-        col_dict = {'Country': 'country',
-                    'State': 'state',
-                    'County': 'county',
-                    'specimen_barcode': 'CatalogNumber',
-                    'path_jpg': 'image_path',
-                    'collector_number': 'collector_number',
-                    'collector_first_name 1': 'collector_first_name1',
-                    'collector_middle_name 1': 'collector_middle_name1',
-                    'collector_last_name 1': 'collector_last_name1',
-                    'collector_first_name 2': 'collector_first_name2',
-                    'collector_middle_name 2': 'collector_middle_name2',
-                    'collector_last_name 2': 'collector_last_name2',
-                    'collector_first_name 3': 'collector_first_name3',
-                    'collector_middle_name 3': 'collector_middle_name3',
-                    'collector_last_name 3': 'collector_last_name3',
-                    'collector_first_name 4': 'collector_first_name4',
-                    'collector_middle_name 4': 'collector_middle_name4',
-                    'collector_last_name 4': 'collector_last_name4',
-                    'collector_first_name 5': 'collector_first_name5',
-                    'collector_middle_name 5': 'collector_middle_name5',
-                    'collector_last_name 5': 'collector_last_name5',
-                    'Genus': 'Genus',
-                    'Species': 'Species',
-                    'Qualifier': 'Qualifier',
-                    'Hybrid': 'Hybrid',
-                    'Taxon ID': 'RankID',
-                    'Author': 'Author',
-                    'Locality': 'locality',
-                    'Verbatim Date': 'verbatim_date',
-                    'Start Date': 'start_date',
-                    'End Date': 'end_date'
+        col_dict = {
+                     'CSV-BATCH': 'CSV_batch',
+                     'FOLDER-BARCODE': 'folder_barcode',
+                     'SPECIMEN-BARCODE': 'CatalogNumber',
+                     'PATH-JPG': 'image_path',
+                     'LABEL-IS-MOSTLY-HANDWRITTEN': 'mostly_handwritten',
+                     'TAXON-ID': 'taxon_id',
+                     'FAMILY': 'Family',
+                     'GENUS': 'Genus',
+                     'SPECIES': 'Species',
+                     'QUALIFIER': 'Qualifier',
+                     'RANK-1': 'Rank 1',
+                     'EPITHET-1': 'Epithet 1',
+                     'RANK-2': 'Rank 2',
+                     'EPITHET-2': 'Epithet 2',
+                     'cover_notes': 'cover_notes',
+                     'HYBRID': 'Hybrid',
+                     'AUTHOR': 'Author',
+                     'COLLECTOR-NUMBER': 'collector_number',
+                     'COLLECTOR-ID-1': 'agent_id1',
+                     'COLLECTOR-FIRST-NAME-1': 'collector_first_name1',
+                     'COLLECTOR-MIDDLE-NAME-1': 'collector_middle_name1',
+                     'COLLECTOR-LAST-NAME-1': 'collector_last_name1',
+                     'COLLECTOR-ID-2': 'agent_id2',
+                     'COLLECTOR-FIRST-NAME-2': 'collector_first_name2',
+                     'COLLECTOR-MIDDLE-NAME-2': 'collector_middle_name2',
+                     'COLLECTOR-LAST-NAME-2': 'collector_last_name2',
+                     'COLLECTOR-ID-3': 'agent_id3',
+                     'COLLECTOR-FIRST-NAME-3': 'collector_first_name3',
+                     'COLLECTOR-MIDDLE-NAME-3': 'collector_middle_name3',
+                     'COLLECTOR-LAST-NAME-3': 'collector_last_name3',
+                     'COLLECTOR-ID-4': 'agent_id4',
+                     'COLLECTOR-FIRST-NAME-4': 'collector_first_name4',
+                     'COLLECTOR-MIDDLE-NAME-4': 'collector_middle_name4',
+                     'COLLECTOR-LAST-NAME-4': 'collector_last_name4',
+                     'COLLECTOR-ID-5': 'agent_id5',
+                     'COLLECTOR-FIRST-NAME-5': 'collector_first_name5',
+                     'COLLECTOR-MIDDLE-NAME-5': 'collector_middle_name5',
+                     'COLLECTOR-LAST-NAME-5': 'collector_last_name5',
+                     'LOCALITY-ID': 'locality_id',
+                     'COUNTRY': 'Country',
+                     'STATE-LOCALITY': 'State',
+                     'COUNTY': 'County',
+                     'PRECISE-LOCALITY': 'locality',
+                     'VERBATIM-DATE': 'verbatim_date',
+                     'START-DATE-MONTH': 'start_date_month',
+                     'START-DATE-DAY': 'start_date_day',
+                     'START-DATE-YEAR': 'start_date_year',
+                     'END-DATE-MONTH': 'end_date_month',
+                     'END-DATE-DAY': 'end_date_day',
+                     'END-DATE-YEAR': 'end_date_year',
+                     'sheet_notes': 'sheet_notes'
                     }
 
+
+        col_order_list = []
+        for key, value in col_dict.items():
+            col_order_list.append(key)
+
+        self.record_full = self.record_full.reindex(columns=col_order_list)
+
         self.record_full.rename(columns=col_dict, inplace=True)
+
+        # self.record_full.to_csv(f'picturae_csv/{self.date_use}/MERGED_CP1_{self.date_use}_BATCH_0001.csv', index=False)
+
+        self.logger.info("merged csv written")
 
 
 
@@ -259,9 +270,6 @@ class CsvCreatePicturae:
             raise ValueError("Taxonomic name with 2 missing ranks")
         else:
             self.logger.info('missing_rank empty: No corrections needed')
-
-
-
 
 
 
@@ -319,13 +327,13 @@ class CsvCreatePicturae:
         genus_in = row[self.record_full.columns.get_loc('Genus')]
         # changing name variable based on condition
 
-        if not pd.isna(second_epithet_in):
+        if pd.notna(second_epithet_in) and second_epithet_in != '':
             tax_name = remove_qualifiers(second_epithet_in)
-        elif not pd.isna(first_epithet_in):
+        elif pd.notna(first_epithet_in) and first_epithet_in != '':
             tax_name = remove_qualifiers(first_epithet_in)
-        elif not pd.isna(spec_in):
+        elif pd.notna(spec_in) and spec_in != '':
             tax_name = remove_qualifiers(spec_in)
-        elif not pd.isna(genus_in):
+        elif pd.notna(genus_in) and genus_in != '':
             tax_name = remove_qualifiers(genus_in)
         else:
             return ValueError('missing taxon in row')
@@ -362,22 +370,25 @@ class CsvCreatePicturae:
         self.flag_missing_rank()
         self.record_full['verbatim_date'] = self.record_full['verbatim_date'].apply(replace_apostrophes)
         self.record_full['locality'] = self.record_full['locality'].apply(replace_apostrophes)
-        date_col_list = ['start_date', 'end_date']
-        # changing date formate to Y month day
-        for col_string in date_col_list:
-            self.record_full[col_string] = pd.to_datetime(self.record_full[col_string],
-                                                          format='%m/%d/%Y').dt.strftime('%Y-%m-%d')
+        # concatenating year, month, day columns into start/end date columns
+
+        for col_name in list(["start", "end"]):
+            self.record_full[f'{col_name}_date'] = self.record_full.apply(
+                 lambda row: format_date_columns(row[f'{col_name}_date_year'],
+                                                 row[f'{col_name}_date_month'], row[f'{col_name}_date_day']), axis=1)
+
 
         # filling in missing subtaxa ranks for first infraspecific rank
 
-        self.record_full['missing_rank'] = pd.isna(self.record_full[f'Rank 1']) & pd.notna(
-                                           self.record_full[f'Epithet 1'])
+        self.record_full['missing_rank'] = (pd.isna(self.record_full[f'Rank 1']) & pd.notna(
+                                           self.record_full[f'Epithet 1'])) | \
+                                           ((self.record_full[f'Rank 1'] == '') & (self.record_full[f'Epithet 1'] != ''))
 
         self.record_full['missing_rank'] = self.record_full['missing_rank'].astype(bool)
 
         self.record_full[f'Rank 1'] = self.record_full[f'Rank 1'].fillna(
                                       self.record_full[f'Epithet 1'].apply(lambda x:
-                                                                           "subsp." if pd.notna(x) else ""))
+                                                                           "subsp." if pd.notna(x) else ''))
 
         # parsing taxon columns
         self.record_full[['gen_spec', 'fullname',
@@ -394,7 +405,7 @@ class CsvCreatePicturae:
 
         self.record_full['Hybrid'] = self.record_full['Hybrid'].apply(str_to_bool)
 
-        self.record_full = self.record_full.replace(['', None, 'nan', np.nan], pd.NA)
+        self.record_full = self.record_full.replace(['', None, 'nan', np.nan], '')
 
 
 
@@ -432,7 +443,7 @@ class CsvCreatePicturae:
         """checks if filepath barcode matches catalog number barcode
             just in case merge between folder and specimen level data was not clean"""
         self.record_full['file_path_digits'] = self.record_full['image_path'].apply(
-            lambda path: get_first_digits_from_filepath(path, field_size=9)
+            lambda path: self.get_first_digits_from_filepath(path, field_size=9)
         )
         self.record_full['is_barcode_match'] = self.record_full.apply(lambda row: row['file_path_digits'] ==
                                                                       row['CatalogNumber'].zfill(9),
@@ -445,7 +456,7 @@ class CsvCreatePicturae:
 
         # truncating image_path column
         self.record_full['image_path'] = self.record_full['image_path'].apply(
-                                         lambda path_img: extract_last_folders(path_img, 2))
+                                         lambda path_img: path.basename(path_img))
 
         self.record_full['image_valid'] = self.record_full['image_path'].apply(
                                           lambda path_img: os.path.exists(f"{self.path_prefix}{path.sep}{path_img}"))
@@ -458,7 +469,8 @@ class CsvCreatePicturae:
                 and `None` if absent from db. In TNRS, only taxonomic names with a `None`
                 result will be checked.
                 args:
-                    None"""
+                    None
+        """
 
         col_list = ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2']
 
@@ -468,7 +480,13 @@ class CsvCreatePicturae:
 
         self.record_full['fulltaxon'] = self.record_full['fulltaxon'].str.strip()
 
-        self.record_full['taxon_id'] = self.record_full['fulltaxon'].apply(self.sql_csv_tools.taxon_get)
+        # Query once per unique entry for efficiency
+        unique_fulltaxons = self.record_full['fulltaxon'].unique()
+
+        taxon_id_map = {fulltaxon: self.sql_csv_tools.taxon_get(fulltaxon) for fulltaxon in unique_fulltaxons}
+
+        # Mapping the results back to the original DataFrame
+        self.record_full['taxon_id'] = self.record_full['fulltaxon'].map(taxon_id_map)
 
         self.record_full['taxon_id'] = self.record_full['taxon_id'].astype(pd.Int64Dtype())
 
@@ -482,66 +500,47 @@ class CsvCreatePicturae:
            for hybrids as IPNI does not work well with hybrids
            """
 
-        bar_tax = self.record_full[pd.isna(self.record_full['taxon_id'])]
-
-        bar_tax = bar_tax[['CatalogNumber', 'fullname']]
-
-        bar_tax['taxon_id'] = bar_tax['fullname'].apply(self.sql_csv_tools.taxon_get)
-
-        bar_tax = bar_tax.drop(columns='taxon_id')
+        bar_tax = self.record_full[pd.isna(self.record_full['taxon_id']) | (self.record_full['taxon_id'] == '')]
 
 
-        resolved_taxon = iterate_taxon_resolve(bar_tax)
+        if len(bar_tax) > 1:
+
+            bar_tax = bar_tax[['CatalogNumber', 'fullname']]
+
+            resolved_taxon = iterate_taxon_resolve(bar_tax)
+
+            resolved_taxon['overall_score'].fillna(0, inplace=True)
 
 
-        resolved_taxon['overall_score'].fillna(0, inplace=True)
+            resolved_taxon = resolved_taxon.drop(columns=["fullname", "unmatched_terms"])
 
-        # filtering out taxa without exact matches , saving to db table
+            # merging columns on Catalog Number
+            if len(resolved_taxon) > 0:
+                self.record_full = pd.merge(self.record_full, resolved_taxon, on="CatalogNumber", how="left")
+            else:
+                self.record_full['name_matched'] = ''
 
-        unmatched_taxa = resolved_taxon[resolved_taxon["overall_score"] < .99]
-
-        # filtering out taxa with tnrs scores lower than .99 (basically exact match)
-        resolved_taxon = resolved_taxon[resolved_taxon["overall_score"] >= .99]
-
-        # dropping uneccessary columns
-
-        resolved_taxon = resolved_taxon.drop(columns=["fullname", "overall_score", "unmatched_terms"])
-
-        # merging columns on full name
-        if len(resolved_taxon) > 0:
-            self.record_full = pd.merge(self.record_full, resolved_taxon, on="CatalogNumber", how="left")
+            self.cleanup_tnrs()
         else:
-            self.record_full['name_matched'] = pd.NA
-
-        upload_length = len(self.record_full.index)
-
-        # dropping taxon rows with no match
-
-        self.record_full = self.record_full[pd.notna(self.record_full['name_matched']) |
-                                            pd.notna(self.record_full['taxon_id'])]
-
-        self.record_full.drop(columns='taxon_id')
-
-        clean_length = len(self.record_full.index)
-
-        self.records_dropped = upload_length - clean_length
-
-        if self.records_dropped > 0:
-            self.logger.info(f"{self.records_dropped} rows dropped due to taxon errors")
-
-        self.cleanup_tnrs()
+            self.logger.info("no taxa with missing taxon_id, skipping TNRS")
 
 
     def cleanup_tnrs(self):
         """cleanup_tnrs: operations to re-consolidate rows with hybrids parsed for tnrs,
             and rows with missing rank parsed for tnrs.
             Separates qualifiers into new column as well.
+            note: Threshold of .99 is set so that it will flag any taxon that differs from its match in any way,
+            which is why a second taxon-concat is not run.
         """
 
         # re-consolidating hybrid column to fullname and removing hybrid_base column
-        hybrid_mask = self.record_full['hybrid_base'].notna()
+
+        self.record_full['hybrid_base'] = self.record_full['hybrid_base'].astype(str).str.strip()
+
+        hybrid_mask = (self.record_full['hybrid_base'].notna()) & (self.record_full['hybrid_base'] != '')
 
         self.record_full.loc[hybrid_mask, 'fullname'] = self.record_full.loc[hybrid_mask, 'hybrid_base']
+
 
         self.record_full = self.record_full.drop(columns=['hybrid_base'])
 
@@ -549,20 +548,25 @@ class CsvCreatePicturae:
 
         self.record_full['missing_rank'] = self.record_full['missing_rank'].replace({'True': True,
                                                                                      'False': False}).astype(bool)
-
+        # mask for succesful match
+        good_match = (pd.notna(self.record_full['name_matched']) & self.record_full['name_matched'] != '') & \
+                     (self.record_full['overall_score'] >= .99)
+        # creating mask for missing ranks
         rank_mask = (self.record_full['missing_rank'] == True) & \
-                    (self.record_full['fullname'] != self.record_full['name_matched']) & \
-                    (pd.notna(self.record_full['name_matched']))
+                    (self.record_full['fullname'] != self.record_full['name_matched']) & good_match
 
+        # replacing good matches with their matched names
         self.record_full.loc[rank_mask, 'fullname'] = self.record_full.loc[rank_mask, 'name_matched']
+
+        # replacing rank for missing rank cases in first intra and full taxon
 
         self.record_full.loc[rank_mask, 'first_intra'] = \
             self.record_full.loc[rank_mask, 'first_intra'].str.replace(" subsp. ", " var. ",
                                                                        regex=False)
 
         self.record_full.loc[rank_mask, 'fulltaxon'] = \
-            self.record_full.loc[rank_mask, 'fulltaxon'].str.replace(" subsp. ", " var. ")
-
+            self.record_full.loc[rank_mask, 'fulltaxon'].str.replace(" subsp. ", " var. ",
+                                                                     regex=False)
         # executing qualifier separator function
         self.record_full = separate_qualifiers(self.record_full, tax_col='fullname')
 
@@ -575,12 +579,31 @@ class CsvCreatePicturae:
         self.record_full['gen_spec'] = self.record_full['gen_spec'].apply(remove_qualifiers)
 
 
-
     def write_upload_csv(self):
         """write_upload_csv: writes a copy of csv to PIC upload
             allows for manual review before uploading.
         """
+        self.record_full.drop(columns=['mostly_handwritten', 'folder_barcode', 'start_date_month',
+                                       'start_date_day', 'start_date_year', 'end_date_month',
+                                       'end_date_day', 'end_date_year'], inplace=True)
+
         file_path = f"PIC_upload{path.sep}PIC_record_{self.date_use}.csv"
+
+        if self.tnrs_ignore is False:
+            taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
+                                                (pd.notna(self.record_full['overall_score'])) &
+                                                (self.record_full['overall_score'] != 0)]
+
+            try:
+                taxon_correct_list = list(taxon_to_correct['CatalogNumber'])
+                assert len(taxon_correct_list) <= 0
+
+            except:
+                raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
+                                          f'the following barcodes: {taxon_correct_list}')
+        else:
+            pass
+
 
         self.record_full.to_csv(file_path, index=False)
 
@@ -593,7 +616,6 @@ class CsvCreatePicturae:
         # verifying file presence
         self.file_present()
         # # modifying linking csv
-        # self.linking_csv_clean()
         # merging csv files
         self.csv_merge()
         # renaming columns
@@ -628,32 +650,33 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Runs checks on Picturae csvs and returns "
                                                  "wrangled csv ready for upload")
     parser.add_argument("-d", "--date", nargs="?", required=True, help="date of batch to process")
+
+    parser.add_argument("-t", "--tnrs_ignore", nargs="?", required=True, help="True or False, choice to "
+                                                                              "ignore TNRS' matched name "
+                                                                              "for taxa that score < .99")
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: %(default)s)")
 
     args = parser.parse_args()
 
+    pic_config = get_config("Botany_PIC")
 
-
-    pic_config = read_json_config("Botany_PIC")
-
-    picturae_csv_instance = CsvCreatePicturae(config=pic_config, date_string=args.date, logging_level=args.log_level)
+    picturae_csv_instance = CsvCreatePicturae(config=pic_config, date_string=args.date, logging_level=args.log_level,
+                                              tnrs_ignore=args.tnrs_ignore)
 
 
 # def full_run():
 #     """testing function to run just the first piece o
 #           f the upload process"""
 #     # logger = logging.getLogger("full_run")
-#     test_config = read_json_config(collection="Botany_PIC")
+#     test_config = get_config(config="Botany_PIC")
 #
-#     date_override = "20230628"
+#     date_override = "20230331"
 #
-#     from gen_import_utils import picturae_paths_list
-#
-#     paths = picturae_paths_list(config=test_config, date=date_override)
-#
-#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config, paths=paths)
+#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config, tnrs_ignore=False)
 #
 #
+#
+# #
 # full_run()

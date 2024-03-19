@@ -39,7 +39,8 @@ class CsvCreatePIC(tk.Frame):
             self.date = date_entry.get()
         else:
             self.date = date_entry
-        process = subprocess.Popen(['python', 'picturae_csv_create.py', '-d', self.date], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(['python', 'picturae_csv_create.py', '-d', self.date],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
         if process.returncode != 0:
             error_message = stderr.decode("utf-8").strip()
