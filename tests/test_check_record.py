@@ -22,7 +22,8 @@ class DatabaseChecks(unittest.TestCase, TestingTools):
                 'image_path': ['CP1_20801212_BATCH_0001/cas0530924.jpg',
                                'CP1_20801212_BATCH_0001/cas58719322.jpg',
                                'CP1_20801212_BATCH_0001/cas0008708.jpg'],
-                'folder_barcode': ['2310_2', '2310_2', '2312_2']}
+                'folder_barcode': ['2310_2', '2310_2', '2312_2'],
+                'duplicate': ['False', 'False', 'False']}
 
         self.test_csv_create_picturae.record_full = pd.DataFrame(data)
 
@@ -30,7 +31,7 @@ class DatabaseChecks(unittest.TestCase, TestingTools):
         """checks whether boolean column added for record present"""
         self.test_csv_create_picturae.barcode_has_record()
         # checks whether boolean column correctly added
-        self.assertEqual(len(self.test_csv_create_picturae.record_full.columns), 4)
+        self.assertEqual(len(self.test_csv_create_picturae.record_full.columns), 5)
         # checks that no NAs were dropped
         self.assertEqual(len(self.test_csv_create_picturae.record_full), 3)
         # checks that the correct boolean order is returned

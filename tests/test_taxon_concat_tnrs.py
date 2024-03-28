@@ -65,7 +65,7 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
 
         self.test_csv_pic.taxon_check_tnrs()
         # assert statements
-        self.assertEqual(len(self.test_csv_pic.record_full.columns), 19)
+        self.assertEqual(len(self.test_csv_pic.record_full.columns), 20)
 
         # 3 rows left as the genus level hybrid Serapicamptis and the mispelled "Castilloja" should fail
 

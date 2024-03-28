@@ -40,7 +40,8 @@ def remove_qualifiers(tax_string: str):
         returns:
             tax_string: a string without qualifier substrings present.
     """
-    qual_list = [" cf.", "cf.", "vel aff.", " vel aff.", " aff.", "aff."]
+    # works better when entries space + qual ordered first, vel aff before aff
+    qual_list = [" cf.", "cf.", " vel aff.", "vel aff.", " aff.",  "aff.", " sec.", "sec."]
     for qual_str in qual_list:
         tax_string = tax_string.replace(qual_str, "")
 

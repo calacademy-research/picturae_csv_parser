@@ -83,7 +83,7 @@ class SqlCsvTools:
             sql += f''' AND LastName = "{last_name}"'''
 
         else:
-            sql += f''' AND FirstName IS NULL'''
+            sql += f''' AND LastName IS NULL'''
 
         if not pd.isna(middle_initial):
             sql += f''' AND MiddleInitial = "{middle_initial}"'''
