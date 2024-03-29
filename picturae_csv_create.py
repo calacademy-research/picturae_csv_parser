@@ -69,7 +69,7 @@ class CsvCreatePicturae:
                      'collector_number', 'collecting_event_guid',
                      'collecting_event_id',
                      'determination_guid', 'collection_ob_id', 'collection_ob_guid',
-                     'name_id', 'author_sci', 'family', 'gen_spec_id', 'family_id', 'parent_author',
+                     'name_id', 'family', 'gen_spec_id', 'family_id',
                      'records_dropped']
 
         for param in init_list:
@@ -128,7 +128,7 @@ class CsvCreatePicturae:
 
         return import_csv
 
-    def drop_common_columns(self, csv: pd.DataFrame, folder = False):
+    def drop_common_columns(self, csv: pd.DataFrame, folder=False):
         """drops columns duplicate between sheet and cover csvs"""
 
         drop_list = ['APPLICATION-ID', 'OBJECT-TYPE', 'APPLICATION-BATCH', 'FEEDBACK-ALEMBO', 'FEEDBACK-CALIFORNIA']
@@ -168,6 +168,13 @@ class CsvCreatePicturae:
         # replacing duplicate barcodes with barcodes from notes section:
         is_duplicate = self.record_full['sheet_notes'].str.contains('\d', regex=True)
 
+        self.record_full['DUPLICATE'] = is_duplicate
+
+        self.record_full['PARENT-BARCODE'] = ''
+
+        # extracting duplicate parent barcode from old image path, before replacing.
+        self.record_full.loc[is_duplicate, 'PARENT-BARCODE'] = self.record_full.loc[is_duplicate, 'SPECIMEN-BARCODE']
+
         self.record_full.loc[is_duplicate, 'SPECIMEN-BARCODE'] = self.record_full.loc[
             is_duplicate, 'sheet_notes'].apply(remove_non_numerics)
 
@@ -181,6 +188,7 @@ class CsvCreatePicturae:
             raise ValueError(f"merge produced {merge_len-unique_len} duplicate records")
 
 
+
     def csv_colnames(self):
         """csv_colnames: function to be used to rename columns to DB standards.
            args:
@@ -190,6 +198,7 @@ class CsvCreatePicturae:
                      'CSV-BATCH': 'CSV_batch',
                      'FOLDER-BARCODE': 'folder_barcode',
                      'SPECIMEN-BARCODE': 'CatalogNumber',
+                     'PARENT-BARCODE': 'parent_CatalogNumber',
                      'PATH-JPG': 'image_path',
                      'LABEL-IS-MOSTLY-HANDWRITTEN': 'mostly_handwritten',
                      'TAXON-ID': 'taxon_id',
@@ -237,7 +246,8 @@ class CsvCreatePicturae:
                      'END-DATE-MONTH': 'end_date_month',
                      'END-DATE-DAY': 'end_date_day',
                      'END-DATE-YEAR': 'end_date_year',
-                     'sheet_notes': 'sheet_notes'
+                     'sheet_notes': 'sheet_notes',
+                     'DUPLICATE': 'duplicate'
                     }
 
 
@@ -255,23 +265,36 @@ class CsvCreatePicturae:
 
 
 
-    def flag_missing_rank(self):
+    def flag_missing_data(self):
 
-        missing_rank = (self.record_full['Rank 1'].isna()) & (self.record_full['Rank 2'].isna()) & \
-                       (~self.record_full['Epithet 1'].isna()) & (~self.record_full['Epithet 2'].isna())
+        # flags in missing rank columns when > 1 infra-specific rank.
+
+        missing_rank = (self.record_full['Rank 1'].isna() | self.record_full['Rank 1'] == '') & \
+                       (self.record_full['Rank 2'].isna() | self.record_full['Rank 2'] == '') & \
+                       (~self.record_full['Epithet 1'].isna() & self.record_full['Epithet 1'] != '') & \
+                       (~self.record_full['Epithet 2'].isna() & self.record_full['Epithet 2'] != '')
 
         missing_rank_csv = self.record_full.loc[missing_rank]
 
         if len(missing_rank_csv) > 0:
-            missing_rank_csv = missing_rank_csv['folder_barcode']
+            missing_rank_set = set(missing_rank_csv['folder_barcode'])
 
-            missing_rank_csv.drop_duplicates(inplace=True)
 
-            raise ValueError("Taxonomic name with 2 missing ranks")
+            raise ValueError(f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)}")
         else:
-            self.logger.info('missing_rank empty: No corrections needed')
+            self.logger.info('no missing ranks: No corrections needed')
 
+        # flags if missing higher geography
 
+        missing_geography = (self.record_full['Country'].isna() | self.record_full['Country'] == '')
+
+        missing_geography_csv = self.record_full.loc[missing_geography]
+
+        if len(missing_geography_csv) > 0:
+            missing_geography_set = set(missing_geography_csv['CatalogNumber'])
+            raise ValueError(f"rows missing higher geography at barcodes {missing_geography_set}")
+        else:
+            self.logger.info('No missing higher geography: No corrections needed')
 
 
     def taxon_concat(self, row):
@@ -305,7 +328,7 @@ class CsvCreatePicturae:
         for columns in column_sets:
             for column in columns:
                 index = self.record_full.columns.get_loc(column)
-                if pd.notna(row[index]):
+                if pd.notna(row[index]) and row[index] != '':
                     if columns == column_sets[0]:
                         full_name += f" {row[index]}"
                     elif columns == column_sets[1]:
@@ -319,6 +342,7 @@ class CsvCreatePicturae:
         # creating taxon name
         # creating temporary string in order to parse taxon names without qualifiers
         separate_string = remove_qualifiers(full_name)
+
         taxon_strings = separate_string.split()
 
         second_epithet_in = row[self.record_full.columns.get_loc('Epithet 2')]
@@ -367,10 +391,19 @@ class CsvCreatePicturae:
             runs dependent function taxon concat
         """
         # flagging taxons with multiple missing ranks
-        self.flag_missing_rank()
+        self.flag_missing_data()
         self.record_full['verbatim_date'] = self.record_full['verbatim_date'].apply(replace_apostrophes)
         self.record_full['locality'] = self.record_full['locality'].apply(replace_apostrophes)
+
+        # converting hybrid column to true boolean
+
+        self.record_full['Hybrid'] = self.record_full['Hybrid'].apply(str_to_bool)
+
         # concatenating year, month, day columns into start/end date columns
+
+        # Replace '.jpg' or '.jpeg' (case insensitive) with '.tif'
+        self.record_full['image_path'] = self.record_full['image_path'].str.replace("\.jpe?g", ".tif",
+                                                                                    case=False, regex=True)
 
         for col_name in list(["start", "end"]):
             self.record_full[f'{col_name}_date'] = self.record_full.apply(
@@ -386,9 +419,11 @@ class CsvCreatePicturae:
 
         self.record_full['missing_rank'] = self.record_full['missing_rank'].astype(bool)
 
-        self.record_full[f'Rank 1'] = self.record_full[f'Rank 1'].fillna(
-                                      self.record_full[f'Epithet 1'].apply(lambda x:
-                                                                           "subsp." if pd.notna(x) else ''))
+        placeholder_rank = (pd.isna(self.record_full['Rank 1']) | (self.record_full['Rank 1'] == '')) & \
+                           (self.record_full['missing_rank'] == True)
+
+        # Set 'Rank 1' to 'subsp.' where the condition is True
+        self.record_full.loc[placeholder_rank, 'Rank 1'] = 'subsp.'
 
         # parsing taxon columns
         self.record_full[['gen_spec', 'fullname',
@@ -401,11 +436,9 @@ class CsvCreatePicturae:
 
         self.record_full[string_list] = self.record_full[string_list].astype(str)
 
-        # converting hybrid column to true boolean
-
-        self.record_full['Hybrid'] = self.record_full['Hybrid'].apply(str_to_bool)
-
         self.record_full = self.record_full.replace(['', None, 'nan', np.nan], '')
+
+        self.record_full['locality'] = self.record_full['locality'].replace(['', None, 'nan', np.nan], '[unspecified]')
 
 
 
@@ -420,6 +453,7 @@ class CsvCreatePicturae:
             barcode = barcode.zfill(9)
             sql = f'''select CatalogNumber from collectionobject
                       where CatalogNumber = {barcode};'''
+            self.logger.info(f"running query: {sql}")
             db_barcode = self.specify_db_connection.get_one_record(sql)
             if db_barcode is None:
                 self.record_full.loc[index, 'barcode_present'] = False
@@ -445,8 +479,9 @@ class CsvCreatePicturae:
         self.record_full['file_path_digits'] = self.record_full['image_path'].apply(
             lambda path: self.get_first_digits_from_filepath(path, field_size=9)
         )
-        self.record_full['is_barcode_match'] = self.record_full.apply(lambda row: row['file_path_digits'] ==
-                                                                      row['CatalogNumber'].zfill(9),
+        self.record_full['is_barcode_match'] = self.record_full.apply(lambda row: (row['file_path_digits'] ==
+                                                                      row['CatalogNumber'].zfill(9)) or
+                                                                      str_to_bool(row['duplicate']) is True,
                                                                       axis=1)
 
         self.record_full = self.record_full.drop(columns='file_path_digits')
@@ -454,12 +489,16 @@ class CsvCreatePicturae:
     def check_if_images_present(self):
         """checks that each image exists, creating boolean column for later use"""
 
+
+
         # truncating image_path column
         self.record_full['image_path'] = self.record_full['image_path'].apply(
                                          lambda path_img: path.basename(path_img))
 
-        self.record_full['image_valid'] = self.record_full['image_path'].apply(
-                                          lambda path_img: os.path.exists(f"{self.path_prefix}{path.sep}{path_img}"))
+        self.record_full['image_valid'] = self.record_full.apply(
+                                          lambda row: os.path.exists(f"{self.path_prefix}{row['image_path']}")
+                                                                        or str_to_bool(row['duplicate']) is True,
+                                                                        axis=1)
 
 
     def check_taxa_against_database(self):
@@ -502,8 +541,11 @@ class CsvCreatePicturae:
 
         bar_tax = self.record_full[pd.isna(self.record_full['taxon_id']) | (self.record_full['taxon_id'] == '')]
 
+        if len(bar_tax) <= 0:
 
-        if len(bar_tax) > 1:
+            self.record_full['overall_score'] = 1
+
+        elif len(bar_tax) > 1:
 
             bar_tax = bar_tax[['CatalogNumber', 'fullname']]
 
@@ -568,15 +610,15 @@ class CsvCreatePicturae:
             self.record_full.loc[rank_mask, 'fulltaxon'].str.replace(" subsp. ", " var. ",
                                                                      regex=False)
         # executing qualifier separator function
-        self.record_full = separate_qualifiers(self.record_full, tax_col='fullname')
+        self.record_full = separate_qualifiers(self.record_full, tax_col='fulltaxon')
+
+        for col in ['fulltaxon', 'fullname', 'gen_spec', 'first_intra', 'taxname']:
+            self.record_full[col] = self.record_full[col].apply(remove_qualifiers)
 
         # pulling new tax IDs for corrected missing ranks
 
         self.record_full.loc[rank_mask, 'taxon_id'] = self.record_full.loc[rank_mask, 'fullname'].apply(
             self.sql_csv_tools.taxon_get)
-
-
-        self.record_full['gen_spec'] = self.record_full['gen_spec'].apply(remove_qualifiers)
 
 
     def write_upload_csv(self):
@@ -605,7 +647,7 @@ class CsvCreatePicturae:
             pass
 
 
-        self.record_full.to_csv(file_path, index=False)
+        self.record_full.to_csv(file_path, index=False, encoding='utf-8')
 
         print(f'DataFrame has been saved to csv as: {file_path}')
 
@@ -667,16 +709,21 @@ if __name__ == "__main__":
 
 
 # def full_run():
+
+    # from tests.testing_tools import TestingTools
+    #
+    # tt = TestingTools()
+    #
+    # tt.create_test_images(barcode_list=self.record_full['CatalogNumber'], color='BurlyWood',
+    #                       expected_dir="/Users/mdelaroca/Documents/sandbox_db/storage_01/"
+    #                                    "picturae/delivery/CP1_20230626_BATCH_0001/undatabased")
 #     """testing function to run just the first piece o
 #           f the upload process"""
 #     # logger = logging.getLogger("full_run")
 #     test_config = get_config(config="Botany_PIC")
 #
-#     date_override = "20230331"
+#     date_override = "20230626"
 #
-#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config, tnrs_ignore=False)
+#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config, tnrs_ignore=True)
 #
-#
-#
-# #
 # full_run()

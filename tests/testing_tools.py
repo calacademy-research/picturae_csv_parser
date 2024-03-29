@@ -16,6 +16,7 @@ class TestingTools:
                 path_list: the number of paths at which to save the same number of fake datasets"""
         fake = Faker()
         for path in path_list:
+
             with open(path, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
 
@@ -31,7 +32,7 @@ class TestingTools:
                     filler_list = ["abcdefg"] * 8
                     jpg_path = fake.file_path(depth=random.randint(1, 5), category='image', extension='jpg')
                     # writing data to CSV
-                    row_list= [specimen_bar, folder_barcode, jpg_path] + filler_list
+                    row_list = [specimen_bar, folder_barcode, jpg_path] + filler_list
                     writer.writerow(row_list)
             print(f"Fake dataset {path} with {num_records} records created successfully")
 
@@ -45,11 +46,11 @@ class TestingTools:
                 date_string: a date string , with which to name directory
                              in which to create and store the dummy images
         """
-        image = Image.new('RGB', (200, 200), color=color)
+        image = Image.new('RGB', (1000, 1000), color=color)
 
         barcode_list = barcode_list
         for barcode in barcode_list:
-            expected_image_path = expected_dir + f"/CAS{barcode}.JPG"
+            expected_image_path = expected_dir + f"/{barcode}.tif"
             os.makedirs(os.path.dirname(expected_image_path), exist_ok=True)
             print(f"Created directory: {os.path.dirname(expected_image_path)}")
             image.save(expected_image_path)

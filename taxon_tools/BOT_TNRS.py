@@ -10,27 +10,26 @@ def iterate_taxon_resolve(taxon_frame):
 
     failed_results = results[results['overall_score'] <= .99].copy()
 
-    failed_results['fullname'] = failed_results['fullname'].replace({' var. ': ' subsp. ',
-                                                                     ' subsp. ': ' var. '}, regex=True)
+    if len(failed_results) > 0:
 
-    failed_results = failed_results[['CatalogNumber', 'fullname']]
+        failed_results['fullname'] = failed_results['fullname'].replace({' var. ': ' subsp. ',
+                                                                         ' subsp. ': ' var. '}, regex=True)
 
-    failed_results = process_taxon_resolve(failed_results)
+        failed_results = failed_results[['CatalogNumber', 'fullname']]
 
-    results = pd.concat([results, failed_results], ignore_index=True)
+        failed_results = process_taxon_resolve(failed_results)
 
-    # print(results)
+        results = pd.concat([results, failed_results], ignore_index=True)
 
-    new_index = results.groupby('CatalogNumber')['overall_score'].idxmax()
+        new_index = results.groupby('CatalogNumber')['overall_score'].idxmax()
 
-    results = results.loc[new_index]
+        results = results.loc[new_index]
+    else:
+        pass
 
     results = results.drop_duplicates(subset='CatalogNumber')
 
     return results
-
-
-
 
 def process_taxon_resolve(taxon_frame):
     """process_taxon_resolve: uses TNRS or the taxonomic name resolution service
@@ -45,7 +44,7 @@ def process_taxon_resolve(taxon_frame):
 
     url_tn = "https://tnrsapi.xyz/tnrs_api.php"
 
-    taxon_frame = taxon_frame.drop_duplicates()
+    unique_taxon = taxon_frame.drop_duplicates(subset='fullname', keep='first')
 
     headers = {
         'Accept': 'application/json',
@@ -53,7 +52,7 @@ def process_taxon_resolve(taxon_frame):
         'charset': 'UTF-8'
     }
 
-    data_json = taxon_frame.to_json(orient='records')
+    data_json = unique_taxon.to_json(orient='records')
 
     sources = "wfo,wcvp"
     class_val = "wfo"
@@ -73,7 +72,6 @@ def process_taxon_resolve(taxon_frame):
 
     results_raw = results_json.json()
 
-
     results = pd.DataFrame(results_raw)
 
     # Replacing empty strings with NaN
@@ -84,7 +82,7 @@ def process_taxon_resolve(taxon_frame):
 
     # Selecting specific columns
     results = results[['Name_submitted', 'Overall_score', 'Name_matched', 'Taxonomic_status',
-                       'Accepted_name', 'Unmatched_terms', 'Accepted_name_author']]
+                       'Accepted_name', 'Unmatched_terms', 'Canonical_author', 'Accepted_name_author']]
 
     results = results.rename(columns={'Name_submitted': 'fullname',
                                       'Name_matched': 'name_matched',
@@ -92,15 +90,24 @@ def process_taxon_resolve(taxon_frame):
                                       'Accepted_name': 'accepted_name',
                                       'Unmatched_terms': 'unmatched_terms',
                                       'Overall_score': 'overall_score',
-                                      'Accepted_name_author': 'accepted_author'})
+                                      'Accepted_name_author': 'accepted_name_author',
+                                      'Canonical_author': 'matched_name_author'})
 
     # Left join with taxon_frame
     results = pd.merge(taxon_frame, results, on='fullname', how='left')
 
     # Selecting specific columns
-    results = results[['fullname', 'name_matched', 'accepted_author', 'overall_score',
+    results = results[['fullname', 'name_matched', 'matched_name_author', 'accepted_name_author', 'overall_score',
                        'unmatched_terms', 'CatalogNumber']]
 
     results['overall_score'] = pd.to_numeric(results['overall_score'], errors='coerce')
 
     return results
+
+# taxon_frame = pd.DataFrame({"CatalogNumber": ['123456'], "fullname": "Fissidens submarginatus"})
+#
+# pd.set_option('display.max_columns', None)
+#
+# results = iterate_taxon_resolve(taxon_frame=taxon_frame)
+#
+# print(results)

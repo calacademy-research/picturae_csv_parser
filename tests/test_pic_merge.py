@@ -68,10 +68,9 @@ class CsvReadMergeTests(unittest.TestCase, TestingTools):
     def test_merge_num_columns(self):
         """test merge with sample data set , checks if shared columns are removed,
            and that the merge occurs with expected # of columns"""
-        # -3 as merge function drops duplicate columns automatically
+        # -1 as merge function drops duplicate columns automatically
         self.test_csv_create_picturae.csv_merge()
-        self.assertEqual(len(self.test_csv_create_picturae.record_full.columns),
-                         len(self.test_csv_create_picturae.csv_read_path('SHEET').columns) - 3)
+        self.assertEqual(len(self.test_csv_create_picturae.record_full.columns), 10)
 
     def test_index_length_matches(self):
         """checks whether dataframe, length changes,

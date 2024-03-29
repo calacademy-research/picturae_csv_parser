@@ -2,7 +2,6 @@
 """
 import pandas as pd
 import re
-pd.set_option('expand_frame_repr', False)
 
 
 # String and numeric reformating tools
@@ -16,7 +15,7 @@ def str_to_bool(value: str):
         returns:
             boolean conversion of string value.
     """
-    return value.lower() == 'true'
+    return value == 'true' or value == "t"
 
 
 def remove_non_numerics(string: str):
@@ -55,7 +54,7 @@ def move_first_substring(string: str, n_char: int):
         return string[n_char+1:] + string[0:n_char+1]
 
 
-def assign_collector_titles(first_last, name: str):
+def assign_collector_titles(first_last, name: str, config):
     """assign_titles:
             function designed to separate out titles in names into a new title column
         args:
@@ -63,25 +62,25 @@ def assign_collector_titles(first_last, name: str):
             name: the name string from which to separate out the titles.
     """
     # to lower to standardize matching
-    titles = ['mr.', 'mrs.', 'ms.', 'dr.', 'jr.', 'sr.', 'ii', 'iii', 'ii', 'v', 'vi', 'vii', 'viii', 'ix', 'esq.']
+    first_name_titles = config.AGENT_FIRST_TITLES
+    last_name_titles = config.AGENT_LAST_TITLES
     title = ""
-    new_name = ""
 
     # Split the full name into words
-    if pd.notna(name):
+    if pd.notna(name) and name != '':
         name_parts = name.split()
     # Find the title in the name_parts
+        if name_parts:
+            if first_last == "first" and (name_parts[0].lower() in first_name_titles):
+                new_name = " ".join(name_parts[1:])
+                title = name_parts[0]
 
-        if first_last == "first" and (name_parts[0].lower() in titles):
-            new_name = " ".join(name_parts[1:])
-            title = name_parts[0]
-
-        elif first_last == "last" and (name_parts[-1].lower() in titles):
-            new_name = " ".join(name_parts[:-1])
-            title = name_parts[-1]
-        else:
-            # If no title is found, assign the full name to the first name
-            new_name = name
+            elif first_last == "last" and (name_parts[-1].lower() in last_name_titles):
+                new_name = " ".join(name_parts[:-1])
+                title = name_parts[-1]
+            else:
+                # If no title is found, assign the full name to the first name
+                new_name = name
     else:
         new_name = name
 
