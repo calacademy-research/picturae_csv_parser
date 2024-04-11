@@ -59,6 +59,15 @@ def format_date_columns(year, month, day):
         return ""
 
 
+def fill_empty_col(dataframe, string_fill, col_name):
+    """fill_empty_col: used to fill empty or NA entries in
+       a given column with a placeholder string or NA, null etc.. """
+
+    dataframe[col_name] = dataframe[col_name].replace(['', None, 'nan', np.nan], string_fill)
+
+    return  dataframe
+
+
 def unique_ordered_list(input_list):
     """unique_ordered_list:
             takes a list and selects only unique elements,
@@ -123,6 +132,14 @@ def to_current_directory():
     directory = os.path.dirname(current_file_path)
 
     os.chdir(directory)
+
+def read_csv_file(csv_path):
+    """ Helper method to read a CSV file and return the DataFrame or raise an error if file does not exist. """
+    try:
+        df = pd.read_csv(csv_path)
+        return df
+    except FileNotFoundError:
+        raise FileNotFoundError(f"No csv path exists for path {csv_path}")
 
 def get_max_subdirectory_date(parent_directory: str):
     """get_max_subdirectory_date: lists every subdirectory in a directory, presuming data is organized by date, in any

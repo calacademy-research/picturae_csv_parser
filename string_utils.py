@@ -167,6 +167,21 @@ def switch_date_format(df: pd.DataFrame, date_col: str, format_to: str):
 
     return df
 
+def remove_before(string, substring):
+    """removes all elements of a string before a
+        given string literal"""
+    # Find the index of pattern
+    index = string.find(substring)
+    # Slice the string from the index to the end
+    result = string[index:]
+
+    return result
+
+def extract_digits(name, num: int):
+    """extract_digits: extracts x number of adjacent digits from inside of string"""
+    pattern = r'\d{' + str(num) + '}'
+    match = re.search(pattern, name)
+    return int(match.group()) if match else None
 
 def to_decimal_degrees(coord: str, num_digits: int):
     """to_decimal_degrees: this function is for the conversion of degrees from

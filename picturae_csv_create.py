@@ -4,6 +4,10 @@
    to catch spelling mistakes, mis-transcribed taxa.
    Source for taxon names at IPNI (International Plant Names Index): https://www.ipni.org/ """
 import argparse
+import os.path
+
+import pandas as pd
+
 from taxon_parse_utils import *
 from gen_import_utils import *
 from string_utils import *
@@ -24,7 +28,7 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, date_string, config, tnrs_ignore, logging_level):
+    def __init__(self, config, tnrs_ignore, logging_level, date_string=None):
         # self.paths = paths
         self.tnrs_ignore = tnrs_ignore
         self.picturae_config = config
@@ -33,7 +37,7 @@ class CsvCreatePicturae:
         self.logger = logging.getLogger("CsvCreatePicturae")
         self.logger.setLevel(logging_level)
 
-        self.init_all_vars(date_string)
+        self.init_all_vars(date_string=date_string)
 
         self.run_all()
 
@@ -53,11 +57,18 @@ class CsvCreatePicturae:
                             initializes all class level variables  """
         self.date_use = date_string
 
-        self.dir_path = self.picturae_config.DATA_FOLDER + f"{self.date_use}"
+        self.cover_list = []
+
+        self.sheet_list = []
+
+        self.path_prefix = self.picturae_config.PREFIX
+
+        if self.date_use is not None:
+            self.dir_path = self.picturae_config.DATA_FOLDER + f"{self.date_use}"
+        else:
+            self.dir_path = self.picturae_config.DATA_FOLDER + "csv_batch"
 
 
-        self.path_prefix = self.picturae_config.PREFIX + f"CP1_{self.date_use}_BATCH_0001" \
-                                                         f"{path.sep}undatabased{path.sep}"
 
         # setting up alternate csv tools connections
 
@@ -78,7 +89,7 @@ class CsvCreatePicturae:
 
     def file_present(self):
         """file_present:
-           checks if correct filepath in working directory,
+           checks if correct filepaths in working directory,
            checks if file is on input date
            checks if file folder is present.
            uses self.use_date to decide which folders to check
@@ -91,42 +102,79 @@ class CsvCreatePicturae:
         dir_sub = os.path.isdir(self.dir_path)
 
         if dir_sub is True:
-            folder_path = self.dir_path + \
-                          self.picturae_config.CSV_FOLD + f"{self.date_use}" + "_BATCH_0001.csv"
+            if self.date_use is not None:
+                folder_path = self.dir_path + \
+                              self.picturae_config.CSV_FOLD + f"{self.date_use}" + "_BATCH_0001.csv"
 
-            specimen_path = self.dir_path + \
-                            self.picturae_config.CSV_SPEC + f"{self.date_use}" + "_BATCH_0001.csv"
+                specimen_path = self.dir_path + \
+                                self.picturae_config.CSV_SPEC + f"{self.date_use}" + "_BATCH_0001.csv"
 
-            if os.path.exists(folder_path):
-                print("Folder csv exists!")
+                if os.path.exists(folder_path):
+                    print("Folder csv exists!")
+                else:
+                    raise ValueError("Folder csv does not exist")
+
+                if os.path.exists(specimen_path):
+                    print("Specimen csv exists!")
+                else:
+                    raise ValueError("Specimen csv does not exist")
             else:
-                raise ValueError("Folder csv does not exist")
+                sheet_count = 0
+                cover_count = 0
 
-            if os.path.exists(specimen_path):
-                print("Specimen csv exists!")
-            else:
-                raise ValueError("Specimen csv does not exist")
+                for root, dirs, files in os.walk(self.dir_path):
+                    for file in files:
+                        file_string = file.lower()
+                        if "sheet_cp1" in file_string:
+                            sheet_count += 1
+                            self.sheet_list.append(file)
+                        elif "cover_cp1" in file_string:
+                            cover_count += 1
+                            self.cover_list.append(file)
+                        else:
+                            self.logger.info(f"csv {file} file does not fit format , skipping")
+                if sheet_count != cover_count:
+                    raise ValueError(f"Count of Sheet CSVs and Cover CSVs do not match {sheet_count} != {cover_count}")
+                else:
+                    self.logger.info("Sheet and Cover CSVs exist!")
         else:
             raise ValueError(f"subdirectory for {self.date_use} not present")
 
+
     def csv_read_path(self, csv_level: str):
-        """csv_read_path:
-                reads in csv data for given date self.date_use
-        args:
-            folder_string: denotes whether specimen or folder level data with "folder" or "specimen"
+        """Reads in CSV data for given level and date.
+        Args:
+            csv_level (str): "COVER" or "SHEET" indicating the level of data.
         """
+        dataframes = []
+
         if csv_level == "COVER":
-            csv_path = self.dir_path + \
-                       self.picturae_config.CSV_FOLD + f"{self.date_use}" + "_BATCH_0001.csv"
+            folder_path = self.picturae_config.CSV_FOLD
+            data_list = self.cover_list
         elif csv_level == "SHEET":
-            csv_path = self.dir_path + \
-                       self.picturae_config.CSV_SPEC + f"{self.date_use}" + "_BATCH_0001.csv"
+            folder_path = self.picturae_config.CSV_SPEC
+            data_list = self.sheet_list
         else:
-            raise InvalidFilenameError(f"No csv path exists for level {csv_level}")
+            raise ValueError("Invalid csv_level value. It must be 'COVER' or 'SHEET'.")
 
-        import_csv = pd.read_csv(csv_path)
+        if self.date_use is not None:
+            csv_path = self.dir_path + folder_path + f"{self.date_use}_BATCH_0001.csv"
+            df = read_csv_file(csv_path)
+            dataframes.append(df)
+        else:
+            for csv_path in data_list:
+                csv_path = self.dir_path + f"{os.path.sep}" + csv_path
+                df = read_csv_file(csv_path)
+                dataframes.append(df)
 
-        return import_csv
+        combined_csv = pd.concat(dataframes, ignore_index=True)
+
+        if len(combined_csv) > 0:
+            return combined_csv
+        else:
+            raise ValueError("The resulting DataFrame is empty; no data was loaded.")
+
+
 
     def drop_common_columns(self, csv: pd.DataFrame, folder=False):
         """drops columns duplicate between sheet and cover csvs"""
@@ -166,7 +214,7 @@ class CsvCreatePicturae:
         self.record_full.rename(columns={"NOTES_x": "cover_notes", "NOTES_y": "sheet_notes"}, inplace=True)
 
         # replacing duplicate barcodes with barcodes from notes section:
-        is_duplicate = self.record_full['sheet_notes'].str.contains('\d', regex=True)
+        is_duplicate = self.record_full['sheet_notes'].astype(str).str.contains('\d', regex=True)
 
         self.record_full['DUPLICATE'] = is_duplicate
 
@@ -205,7 +253,7 @@ class CsvCreatePicturae:
                      'FAMILY': 'Family',
                      'GENUS': 'Genus',
                      'SPECIES': 'Species',
-                     'QUALIFIER': 'Qualifier',
+                     'QUALIFIER': 'qualifier',
                      'RANK-1': 'Rank 1',
                      'EPITHET-1': 'Epithet 1',
                      'RANK-2': 'Rank 2',
@@ -261,8 +309,7 @@ class CsvCreatePicturae:
 
         # self.record_full.to_csv(f'picturae_csv/{self.date_use}/MERGED_CP1_{self.date_use}_BATCH_0001.csv', index=False)
 
-        self.logger.info("merged csv written")
-
+        # self.logger.info("merged csv written")
 
 
     def flag_missing_data(self):
@@ -276,25 +323,37 @@ class CsvCreatePicturae:
 
         missing_rank_csv = self.record_full.loc[missing_rank]
 
-        if len(missing_rank_csv) > 0:
-            missing_rank_set = set(missing_rank_csv['folder_barcode'])
-
-
-            raise ValueError(f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)}")
-        else:
-            self.logger.info('no missing ranks: No corrections needed')
-
         # flags if missing higher geography
 
         missing_geography = (self.record_full['Country'].isna() | self.record_full['Country'] == '')
 
         missing_geography_csv = self.record_full.loc[missing_geography]
 
+        # flags if label is covered or folded.
+
+        missing_label = ["covered" in row.lower() or "folded" in row.lower() for row in self.record_full['sheet_notes']]
+
+        missing_label_csv = self.record_full.loc[missing_label]
+
+        if len(missing_rank_csv) > 0:
+            missing_rank_set = set(missing_rank_csv['folder_barcode'])
+
+            raise ValueError(f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)}")
+        else:
+            self.logger.info('no missing ranks: No corrections needed')
+
         if len(missing_geography_csv) > 0:
             missing_geography_set = set(missing_geography_csv['CatalogNumber'])
             raise ValueError(f"rows missing higher geography at barcodes {missing_geography_set}")
         else:
             self.logger.info('No missing higher geography: No corrections needed')
+
+        if len(missing_label_csv) > 0:
+            missing_label_set = set(missing_label_csv['CatalogNumber'])
+            raise ValueError(f"label covered or folded at barcodes {missing_label_set}")
+        else:
+            self.logger.info('No covered or missing labels: No corrections needed')
+
 
 
     def taxon_concat(self, row):
@@ -405,6 +464,18 @@ class CsvCreatePicturae:
         self.record_full['image_path'] = self.record_full['image_path'].str.replace("\.jpe?g", ".tif",
                                                                                     case=False, regex=True)
 
+        # truncating image_path column and concatenating with batch path
+        self.record_full['CSV_batch'] = self.record_full['CSV_batch'].apply(
+                                        lambda csv_batch: remove_before(csv_batch, "CP1"))
+
+        self.record_full['image_path'] = self.record_full['image_path'].apply(
+            lambda path_img: path.basename(path_img))
+
+        self.record_full['image_path'] = self.record_full['CSV_batch'] + f"{os.path.sep}undatabased" + \
+                                         f"{os.path.sep}" + self.record_full['image_path']
+
+        # concatenate custom
+
         for col_name in list(["start", "end"]):
             self.record_full[f'{col_name}_date'] = self.record_full.apply(
                  lambda row: format_date_columns(row[f'{col_name}_date_year'],
@@ -438,8 +509,9 @@ class CsvCreatePicturae:
 
         self.record_full = self.record_full.replace(['', None, 'nan', np.nan], '')
 
-        self.record_full['locality'] = self.record_full['locality'].replace(['', None, 'nan', np.nan], '[unspecified]')
+        self.record_full = fill_empty_col(self.record_full, string_fill="[unspecified]", col_name="locality")
 
+        self.record_full = fill_empty_col(self.record_full, string_fill="[No date on label]", col_name="verbatim_date")
 
 
     def barcode_has_record(self):
@@ -449,7 +521,7 @@ class CsvCreatePicturae:
         self.record_full['barcode_present'] = ''
 
         for index, row in self.record_full.iterrows():
-            barcode = os.path.basename(row['CatalogNumber'])
+            barcode = row['CatalogNumber']
             barcode = barcode.zfill(9)
             sql = f'''select CatalogNumber from collectionobject
                       where CatalogNumber = {barcode};'''
@@ -488,12 +560,6 @@ class CsvCreatePicturae:
 
     def check_if_images_present(self):
         """checks that each image exists, creating boolean column for later use"""
-
-
-
-        # truncating image_path column
-        self.record_full['image_path'] = self.record_full['image_path'].apply(
-                                         lambda path_img: path.basename(path_img))
 
         self.record_full['image_valid'] = self.record_full.apply(
                                           lambda row: os.path.exists(f"{self.path_prefix}{row['image_path']}")
@@ -545,6 +611,10 @@ class CsvCreatePicturae:
 
             self.record_full['overall_score'] = 1
 
+            self.record_full['name_matched'] = ''
+
+            self.record_full['matched_name_author'] = ''
+
         elif len(bar_tax) > 1:
 
             bar_tax = bar_tax[['CatalogNumber', 'fullname']]
@@ -560,11 +630,11 @@ class CsvCreatePicturae:
             if len(resolved_taxon) > 0:
                 self.record_full = pd.merge(self.record_full, resolved_taxon, on="CatalogNumber", how="left")
             else:
-                self.record_full['name_matched'] = ''
+                raise ValueError("resolved TNRS data not returned")
 
             self.cleanup_tnrs()
         else:
-            self.logger.info("no taxa with missing taxon_id, skipping TNRS")
+            self.logger.error("bar tax length non-numeric")
 
 
     def cleanup_tnrs(self):
@@ -620,6 +690,9 @@ class CsvCreatePicturae:
         self.record_full.loc[rank_mask, 'taxon_id'] = self.record_full.loc[rank_mask, 'fullname'].apply(
             self.sql_csv_tools.taxon_get)
 
+    # def fill_empty_agent:
+
+
 
     def write_upload_csv(self):
         """write_upload_csv: writes a copy of csv to PIC upload
@@ -629,7 +702,12 @@ class CsvCreatePicturae:
                                        'start_date_day', 'start_date_year', 'end_date_month',
                                        'end_date_day', 'end_date_year'], inplace=True)
 
-        file_path = f"PIC_upload{path.sep}PIC_record_{self.date_use}.csv"
+        batch_date_list = self.record_full['CSV_batch'].apply(extract_digits, args=(8,))
+
+        if self.date_use is not None:
+            file_path = f"PIC_upload{path.sep}PIC_record_{self.date_use}.csv"
+        else:
+            file_path = f"PIC_upload{path.sep}PIC_record_{batch_date_list.min()}_{batch_date_list.max()}.csv"
 
         if self.tnrs_ignore is False:
             taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
@@ -691,7 +769,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Runs checks on Picturae csvs and returns "
                                                  "wrangled csv ready for upload")
-    parser.add_argument("-d", "--date", nargs="?", required=True, help="date of batch to process")
+    parser.add_argument("-d", "--date", nargs="?", required=False, help="date of batch to process", default=None)
 
     parser.add_argument("-t", "--tnrs_ignore", nargs="?", required=True, help="True or False, choice to "
                                                                               "ignore TNRS' matched name "
@@ -709,6 +787,8 @@ if __name__ == "__main__":
 
 
 # def full_run():
+#     """testing function to run just the first piece of the upload process"""
+    # logger = logging.getLogger("full_run")
 
     # from tests.testing_tools import TestingTools
     #
@@ -717,13 +797,10 @@ if __name__ == "__main__":
     # tt.create_test_images(barcode_list=self.record_full['CatalogNumber'], color='BurlyWood',
     #                       expected_dir="/Users/mdelaroca/Documents/sandbox_db/storage_01/"
     #                                    "picturae/delivery/CP1_20230626_BATCH_0001/undatabased")
-#     """testing function to run just the first piece o
-#           f the upload process"""
-#     # logger = logging.getLogger("full_run")
 #     test_config = get_config(config="Botany_PIC")
 #
-#     date_override = "20230626"
+#     date_override = None
 #
-#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config, tnrs_ignore=True)
+#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config, tnrs_ignore=False)
 #
 # full_run()

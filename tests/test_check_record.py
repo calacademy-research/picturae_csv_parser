@@ -17,11 +17,12 @@ class DatabaseChecks(unittest.TestCase, TestingTools):
 
         # creating dummy dataset, one mistake 530923 != 530924 inserted on purpose
         # the test barcode that is set to return a false is 58719322,
+        # a test path that is set to return false on image db (all db records are jpgs)
         # an unrealistically high barcode higher than digit limit in DB #
-        data = {'CatalogNumber': ['530923', '58719322', '8708'],
+        data = {'CatalogNumber': ['530923', '98719322', '8708'],
                 'image_path': ['CP1_20801212_BATCH_0001/cas0530924.jpg',
-                               'CP1_20801212_BATCH_0001/cas58719322.jpg',
-                               'CP1_20801212_BATCH_0001/cas0008708.jpg'],
+                               'CP1_20801212_BATCH_0001/cas98719322.jpg',
+                               'CP1_20801212_BATCH_0001/cas0008708.tif'],
                 'folder_barcode': ['2310_2', '2310_2', '2312_2'],
                 'duplicate': ['False', 'False', 'False']}
 
