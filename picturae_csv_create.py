@@ -28,9 +28,10 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, logging_level, date_string=None):
+    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, date_string=None):
         # self.paths = paths
         self.tnrs_ignore = tnrs_ignore
+        self.covered_ignore = covered_ignore
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
         self.image_client = ImageClient(config=self.picturae_config)
@@ -337,20 +338,25 @@ class CsvCreatePicturae:
 
         if len(missing_rank_csv) > 0:
             missing_rank_set = set(missing_rank_csv['folder_barcode'])
-
-            raise ValueError(f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)}")
+            batch_set = set(missing_rank_csv['CSV_batch'])
+            raise ValueError(f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)} "
+                             f"in batches {batch_set}")
         else:
             self.logger.info('no missing ranks: No corrections needed')
 
         if len(missing_geography_csv) > 0:
             missing_geography_set = set(missing_geography_csv['CatalogNumber'])
-            raise ValueError(f"rows missing higher geography at barcodes {missing_geography_set}")
+            batch_set = set(missing_geography_csv['CSV_batch'])
+            raise ValueError(f"rows missing higher geography at barcodes {missing_geography_set} "
+                             f"in batches {batch_set}")
         else:
             self.logger.info('No missing higher geography: No corrections needed')
 
         if len(missing_label_csv) > 0:
             missing_label_set = set(missing_label_csv['CatalogNumber'])
-            raise ValueError(f"label covered or folded at barcodes {missing_label_set}")
+            batch_set = set(missing_label_csv['CSV_batch'])
+            raise ValueError(f"label covered or folded at barcodes {missing_label_set} "
+                             f"in batches {batch_set}")
         else:
             self.logger.info('No covered or missing labels: No corrections needed')
 
@@ -482,6 +488,14 @@ class CsvCreatePicturae:
                                                  row[f'{col_name}_date_month'], row[f'{col_name}_date_day']), axis=1)
 
 
+        # removing leading and trailing space from taxa
+
+        tax_cols = ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2']
+
+        self.record_full[tax_cols] = self.record_full[tax_cols].applymap(
+                                           lambda x: x.strip() if isinstance(x, str) else x)
+
+
         # filling in missing subtaxa ranks for first infraspecific rank
 
         self.record_full['missing_rank'] = (pd.isna(self.record_full[f'Rank 1']) & pd.notna(
@@ -580,8 +594,10 @@ class CsvCreatePicturae:
         col_list = ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2']
 
         self.record_full['fulltaxon'] = ''
-        for column in col_list:
-            self.record_full['fulltaxon'] += self.record_full[column].fillna('') + ' '
+        # concatenating together taxonomic columns to create fulltaxon
+
+        self.record_full['fulltaxon'] = self.record_full[col_list].fillna('').apply(lambda x: ' '.join(x[x != '']),
+                                                                                    axis=1)
 
         self.record_full['fulltaxon'] = self.record_full['fulltaxon'].str.strip()
 
@@ -774,6 +790,11 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--tnrs_ignore", nargs="?", required=True, help="True or False, choice to "
                                                                               "ignore TNRS' matched name "
                                                                               "for taxa that score < .99")
+
+    parser.add_argument("-ci","--covered_ignore", nargs="?",
+                        required=False, help="True or False choice to ignore warnings for covered/folded specimens",
+                        default=False)
+
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: %(default)s)")
@@ -783,7 +804,7 @@ if __name__ == "__main__":
     pic_config = get_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, date_string=args.date, logging_level=args.log_level,
-                                              tnrs_ignore=args.tnrs_ignore)
+                                              tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore)
 
 
 # def full_run():
