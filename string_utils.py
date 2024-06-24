@@ -15,7 +15,11 @@ def str_to_bool(value: str):
         returns:
             boolean conversion of string value.
     """
-    return value == 'true' or value == "t"
+    if isinstance(value, bool):
+        return value
+    else:
+        value = str(value)
+        return value.lower() == 'true' or value.lower() == "t"
 
 
 def remove_non_numerics(string: str):
@@ -52,6 +56,13 @@ def move_first_substring(string: str, n_char: int):
         return string
     else:
         return string[n_char+1:] + string[0:n_char+1]
+
+
+def remove_barcode_suffix(num):
+    """Remove barcode notation of _ followed by any number for duplicate record sheets."""
+    if isinstance(num, int):
+        num = str(num)
+    return re.sub(r'_\d+$', '', num)
 
 
 def assign_collector_titles(first_last, name: str, config):

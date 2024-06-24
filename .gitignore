@@ -58,3 +58,4 @@ settings.development.py
 **/pic_import_monitoring.html
 *JPG*
 *TIF*git add
+*.txt*
