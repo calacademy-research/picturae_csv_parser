@@ -30,44 +30,21 @@ def fill_missing_folder_barcodes(df, spec_bar: str, fold_bar: str, parent_bar: s
     # Create a dictionary to map PARENT-BARCODE to FOLDER-BARCODE
     parent_to_folder = df.set_index(parent_bar)[fold_bar].to_dict()
 
-    # Fill missing FOLDER-BARCODEs
+    # Fill missing FOLDER-BARCODE
     for idx, row in df.iterrows():
 
-        # Check if we can fill using the SPECIMEN-BARCODE from the parent dictionary
+        # fill FOLDER-BARCODE using the SPECIMEN-BARCODE from the parent_to_folder dictionary
         if pd.isna(row[fold_bar]) and pd.notna(row[spec_bar]):
             folder_barcode = parent_to_folder.get(row[spec_bar])
             if folder_barcode:
                 df.at[idx, fold_bar] = folder_barcode
-
+        # if still empty fill using the FOLDER-BARCODE from the specimen_to_folder dictionary
         if pd.isna(row[fold_bar]) and pd.notna(row[parent_bar]):
             folder_barcode = specimen_to_folder.get(row[parent_bar])
             if folder_barcode:
                 df.at[idx, fold_bar] = folder_barcode
 
     return df
-
-    # # Create a dictionary to map parent barcodes to their folder-barcode
-    # parent_to_folder = {}
-    #
-    # # First pass: Populate the dictionary with existing folder-barcodes
-    # for index, row in df.iterrows():
-    #     if pd.notnull(row[fold_bar]):
-    #         parent_to_folder[row[spec_bar]] = row[fold_bar]
-    #
-    # # Second pass: Ensure all rows have the correct folder-barcode
-    # for index, row in df.iterrows():
-    #     if pd.isnull(row[parent_bar]):
-    #         parent_barcode = row[spec_bar]
-    #     else:
-    #         parent_barcode = row[parent_bar]
-    #
-    #     if parent_barcode in parent_to_folder:
-    #         df.at[index, fold_bar] = parent_to_folder[parent_barcode]
-    #     elif pd.notnull(row[fold_bar]):
-    #         parent_to_folder[parent_barcode] = row[fold_bar]
-    #         df.at[index, fold_bar] = row[fold_bar]
-    #
-    # return df
 
 
 def standardize_headers(df):

@@ -220,7 +220,7 @@ class CsvCreatePicturae:
         spec_csv['SPECIMEN-BARCODE'] = spec_csv['SPECIMEN-BARCODE'].apply(remove_barcode_suffix)
 
         # replacing duplicate barcodes with barcodes from notes section:
-        is_duplicate = spec_csv['NOTES'].astype(str).str.contains('\d', regex=True)
+        is_duplicate = spec_csv['NOTES'].astype(str).str.contains(r'\d', regex=True)
 
         spec_csv['DUPLICATE'] = is_duplicate
 
@@ -234,9 +234,6 @@ class CsvCreatePicturae:
 
         spec_csv = fill_missing_folder_barcodes(df=spec_csv, spec_bar="SPECIMEN-BARCODE",
                                                 fold_bar='FOLDER-BARCODE', parent_bar="PARENT-BARCODE")
-
-        # spec_csv.to_csv(f'picturae_csv/csv_batch/PIC_upload/test_spec_all.csv',
-        #                          quoting=csv.QUOTE_NONNUMERIC, index=False)
 
         # merging folder and specimen csvs
         self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
@@ -257,10 +254,6 @@ class CsvCreatePicturae:
         # Filter spec_csv to include only rows where SPECIMEN-BARCODE is in spec_difference
         filtered_spec_csv = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
 
-        # filtered_spec_csv.to_csv(f'picturae_csv/csv_batch/PIC_upload/test_spec.csv',
-        #                          quoting=csv.QUOTE_NONNUMERIC, index=False)
-
-
         csv_batch_unmatch = filtered_spec_csv['CSV-BATCH'].unique()
 
         if len(spec_difference) > 0:
@@ -276,6 +269,7 @@ class CsvCreatePicturae:
 
         unmarked_dupes = duplicates[duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'COLLECTOR-NUMBER'], keep=False)==False]
 
+        # troubleshooting code uncomment to find falsely marked duplicates
         # unmarked_all = self.record_full[
         #     self.record_full['SPECIMEN-BARCODE'].isin(unmarked_dupes['SPECIMEN-BARCODE'])]
         #
@@ -361,9 +355,9 @@ class CsvCreatePicturae:
 
         self.record_full = self.record_full.reindex(columns=col_order_list)
 
-        # comment out before committing
-        self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
-
+        # comment out before committing, code to create simple manifests
+        # self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
+        #
         self.record_full.rename(columns=col_dict, inplace=True)
 
         # self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
@@ -528,7 +522,7 @@ class CsvCreatePicturae:
         # concatenating year, month, day columns into start/end date columns
 
         # Replace '.jpg' or '.jpeg' (case insensitive) with '.tif'
-        self.record_full['image_path'] = self.record_full['image_path'].str.replace("\.jpe?g", ".tif",
+        self.record_full['image_path'] = self.record_full['image_path'].str.replace(r"\.jpe?g", ".tif",
                                                                                     case=False, regex=True)
 
         # truncating image_path column and concatenating with batch path

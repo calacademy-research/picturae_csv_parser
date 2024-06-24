@@ -30,6 +30,7 @@ class AssembleExpedition:
         self.logger.addHandler(handler)
 
     def duplicate_resized_images(self, batch_csv):
+        """creates a copy of image for multi-barcode specimens to allow for one image per barcode."""
         for row in batch_csv.itertuples():
             if row.duplicate is True or row.duplicate == 1:
                 parent_bar = row.ParentBarcode
@@ -118,8 +119,6 @@ if __name__ == "__main__":
     parser.add_argument("-cn", "--csv_name", nargs="?", required=True, help="Path of CSV to process", default=None)
 
     args = parser.parse_args()
-
-    # csv_name = "duplicate_exp.csv"
 
     assemble_instance = AssembleExpedition(csv_name=args.csv_name)
 

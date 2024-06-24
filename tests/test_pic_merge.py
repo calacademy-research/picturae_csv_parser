@@ -90,8 +90,8 @@ class CsvReadMergeTests(unittest.TestCase, TestingTools):
         # testing output
         self.test_csv_create_picturae.csv_merge()
         csv_specimen = self.test_csv_create_picturae.csv_read_path(csv_level="SHEET")
-        self.assertEqual(set(self.test_csv_create_picturae.record_full['SPECIMEN-BARCODE']),
-                         set(csv_specimen['SPECIMEN-BARCODE']))
+        self.assertEqual(set(self.test_csv_create_picturae.record_full['FOLDER-BARCODE']),
+                         set(csv_specimen['FOLDER-BARCODE']))
 
     def test_output_isnot_empty(self):
         """tests whether merge function accidentally
