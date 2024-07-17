@@ -4,10 +4,9 @@
    to catch spelling mistakes, mis-transcribed taxa.
    Source for taxon names at IPNI (International Plant Names Index): https://www.ipni.org/ """
 import argparse
+import csv
 import os.path
-
 import pandas as pd
-
 from taxon_parse_utils import *
 from gen_import_utils import *
 from string_utils import *
@@ -30,8 +29,8 @@ class InvalidFilenameError(Exception):
 class CsvCreatePicturae:
     def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, date_string=None):
         # self.paths = paths
-        self.tnrs_ignore = tnrs_ignore
-        self.covered_ignore = covered_ignore
+        self.tnrs_ignore = str_to_bool(tnrs_ignore)
+        self.covered_ignore = str_to_bool(covered_ignore)
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
         self.image_client = ImageClient(config=self.picturae_config)
@@ -111,12 +110,12 @@ class CsvCreatePicturae:
                                 self.picturae_config.CSV_SPEC + f"{self.date_use}" + "_BATCH_0001.csv"
 
                 if os.path.exists(folder_path):
-                    print("Folder csv exists!")
+                    self.logger.info("Folder csv exists!")
                 else:
                     raise ValueError("Folder csv does not exist")
 
                 if os.path.exists(specimen_path):
-                    print("Specimen csv exists!")
+                    self.logger.info("Specimen csv exists!")
                 else:
                     raise ValueError("Specimen csv does not exist")
             else:
@@ -161,11 +160,15 @@ class CsvCreatePicturae:
         if self.date_use is not None:
             csv_path = self.dir_path + folder_path + f"{self.date_use}_BATCH_0001.csv"
             df = read_csv_file(csv_path)
+            if " " in df.columns[0]:
+                df = standardize_headers(df)
             dataframes.append(df)
         else:
             for csv_path in data_list:
                 csv_path = self.dir_path + f"{os.path.sep}" + csv_path
                 df = read_csv_file(csv_path)
+                if " " in df.columns[0]:
+                    df = standardize_headers(df)
                 dataframes.append(df)
 
         combined_csv = pd.concat(dataframes, ignore_index=True)
@@ -199,6 +202,10 @@ class CsvCreatePicturae:
         fold_csv = self.csv_read_path(csv_level="COVER")
         spec_csv = self.csv_read_path(csv_level="SHEET")
 
+        # set this way currently as
+        # the folder name as it appears on the spec sheet is put into specimen barcode on cover
+        fold_csv['FOLDER-BARCODE'] = fold_csv['SPECIMEN-BARCODE']
+
         self.drop_common_columns(fold_csv, folder=True)
 
         self.drop_common_columns(spec_csv)
@@ -208,33 +215,75 @@ class CsvCreatePicturae:
         if len(difference) > 0:
             self.logger.warning(f"Following folder barcode not in specimen csv {difference}")
 
-        self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
 
-        self.record_full.fillna('', inplace=True)
-
-        self.record_full.rename(columns={"NOTES_x": "cover_notes", "NOTES_y": "sheet_notes"}, inplace=True)
+        # removing underscore suffix from barcodes
+        spec_csv['SPECIMEN-BARCODE'] = spec_csv['SPECIMEN-BARCODE'].apply(remove_barcode_suffix)
 
         # replacing duplicate barcodes with barcodes from notes section:
-        is_duplicate = self.record_full['sheet_notes'].astype(str).str.contains('\d', regex=True)
+        is_duplicate = spec_csv['NOTES'].astype(str).str.contains(r'\d', regex=True)
 
-        self.record_full['DUPLICATE'] = is_duplicate
+        spec_csv['DUPLICATE'] = is_duplicate
 
-        self.record_full['PARENT-BARCODE'] = ''
+        spec_csv['PARENT-BARCODE'] = ''
 
         # extracting duplicate parent barcode from old image path, before replacing.
-        self.record_full.loc[is_duplicate, 'PARENT-BARCODE'] = self.record_full.loc[is_duplicate, 'SPECIMEN-BARCODE']
+        spec_csv.loc[is_duplicate, 'PARENT-BARCODE'] = spec_csv.loc[is_duplicate, 'SPECIMEN-BARCODE']
 
-        self.record_full.loc[is_duplicate, 'SPECIMEN-BARCODE'] = self.record_full.loc[
-            is_duplicate, 'sheet_notes'].apply(remove_non_numerics)
+        spec_csv.loc[is_duplicate, 'SPECIMEN-BARCODE'] = spec_csv.loc[
+            is_duplicate, 'NOTES'].apply(remove_non_numerics)
+
+        spec_csv = fill_missing_folder_barcodes(df=spec_csv, spec_bar="SPECIMEN-BARCODE",
+                                                fold_bar='FOLDER-BARCODE', parent_bar="PARENT-BARCODE")
+
+        # merging folder and specimen csvs
+        self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
+
+        # filling na
+        self.record_full.fillna('', inplace=True)
+
+        # renaming notes for sheet vs cover
+        self.record_full.rename(columns={"NOTES_x": "cover_notes", "NOTES_y": "sheet_notes"}, inplace=True)
+
+        # checking if any specimen barcodes did not match to folder barcode
+        spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
+
+        spec_difference = list(spec_difference)
+
+        spec_difference.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
+
+        # Filter spec_csv to include only rows where SPECIMEN-BARCODE is in spec_difference
+        filtered_spec_csv = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
+
+        csv_batch_unmatch = filtered_spec_csv['CSV-BATCH'].unique()
+
+        if len(spec_difference) > 0:
+            raise ValueError(f"In the following batches {csv_batch_unmatch}, the"
+                             f" following barcodes not matched to a folder {spec_difference}")
+
+
+        # checking post-merge lengths
 
         merge_len = len(self.record_full)
+
+        duplicates = self.record_full[self.record_full.duplicated(subset='SPECIMEN-BARCODE', keep=False)]
+
+        unmarked_dupes = duplicates[duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'COLLECTOR-NUMBER'], keep=False)==False]
+
+        # troubleshooting code uncomment to find falsely marked duplicates
+        # unmarked_all = self.record_full[
+        #     self.record_full['SPECIMEN-BARCODE'].isin(unmarked_dupes['SPECIMEN-BARCODE'])]
+        #
+        # unmarked_all.to_csv(f'picturae_csv/csv_batch/PIC_upload/test_spec_dup.csv',
+        #                           quoting=csv.QUOTE_NONNUMERIC, index=False)
+
+        self.record_full = self.record_full.drop(unmarked_dupes.index)
 
         self.record_full = self.record_full.drop_duplicates()
 
         unique_len = len(self.record_full)
 
         if merge_len > unique_len:
-            raise ValueError(f"merge produced {merge_len-unique_len} duplicate records")
+            self.logger.error(f"Detected {merge_len-unique_len} duplicate records")
 
 
 
@@ -306,11 +355,16 @@ class CsvCreatePicturae:
 
         self.record_full = self.record_full.reindex(columns=col_order_list)
 
+        # comment out before committing, code to create simple manifests
+        # self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
+        #
         self.record_full.rename(columns=col_dict, inplace=True)
 
-        # self.record_full.to_csv(f'picturae_csv/{self.date_use}/MERGED_CP1_{self.date_use}_BATCH_0001.csv', index=False)
-
+        # self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
+        #                         quoting=csv.QUOTE_NONNUMERIC, index=False)
+        #
         # self.logger.info("merged csv written")
+
 
 
     def flag_missing_data(self):
@@ -326,7 +380,8 @@ class CsvCreatePicturae:
 
         # flags if missing higher geography
 
-        missing_geography = (self.record_full['Country'].isna() | self.record_full['Country'] == '')
+        missing_geography = (self.record_full['Country'].isna() | (self.record_full['Country'] == '') |
+                             (self.record_full['Country'].isnull()))
 
         missing_geography_csv = self.record_full.loc[missing_geography]
 
@@ -467,7 +522,7 @@ class CsvCreatePicturae:
         # concatenating year, month, day columns into start/end date columns
 
         # Replace '.jpg' or '.jpeg' (case insensitive) with '.tif'
-        self.record_full['image_path'] = self.record_full['image_path'].str.replace("\.jpe?g", ".tif",
+        self.record_full['image_path'] = self.record_full['image_path'].str.replace(r"\.jpe?g", ".tif",
                                                                                     case=False, regex=True)
 
         # truncating image_path column and concatenating with batch path
@@ -721,9 +776,9 @@ class CsvCreatePicturae:
         batch_date_list = self.record_full['CSV_batch'].apply(extract_digits, args=(8,))
 
         if self.date_use is not None:
-            file_path = f"PIC_upload{path.sep}PIC_record_{self.date_use}.csv"
+            file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{self.date_use}.csv"
         else:
-            file_path = f"PIC_upload{path.sep}PIC_record_{batch_date_list.min()}_{batch_date_list.max()}.csv"
+            file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{batch_date_list.min()}_{batch_date_list.max()}.csv"
 
         if self.tnrs_ignore is False:
             taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
@@ -740,10 +795,9 @@ class CsvCreatePicturae:
         else:
             pass
 
-
         self.record_full.to_csv(file_path, index=False, encoding='utf-8')
 
-        print(f'DataFrame has been saved to csv as: {file_path}')
+        self.logger.info(f'DataFrame has been saved to csv as: {file_path}')
 
     def run_all(self):
         """run_all: runs all methods in the class in order"""
@@ -780,18 +834,25 @@ class CsvCreatePicturae:
         self.write_upload_csv()
 
 
-
+#
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Runs checks on Picturae csvs and returns "
                                                  "wrangled csv ready for upload")
+
+    parser.add_argument('-v', '--verbosity',
+                        help='verbosity level. repeat flag for more detail',
+                        default=0,
+                        dest='verbose',
+                        action='count')
+
     parser.add_argument("-d", "--date", nargs="?", required=False, help="date of batch to process", default=None)
 
     parser.add_argument("-t", "--tnrs_ignore", nargs="?", required=True, help="True or False, choice to "
                                                                               "ignore TNRS' matched name "
                                                                               "for taxa that score < .99")
 
-    parser.add_argument("-ci","--covered_ignore", nargs="?",
+    parser.add_argument("-ci", "--covered_ignore", nargs="?",
                         required=False, help="True or False choice to ignore warnings for covered/folded specimens",
                         default=False)
 
@@ -806,22 +867,16 @@ if __name__ == "__main__":
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, date_string=args.date, logging_level=args.log_level,
                                               tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore)
 
-
+#
 # def full_run():
 #     """testing function to run just the first piece of the upload process"""
-    # logger = logging.getLogger("full_run")
-
-    # from tests.testing_tools import TestingTools
-    #
-    # tt = TestingTools()
-    #
-    # tt.create_test_images(barcode_list=self.record_full['CatalogNumber'], color='BurlyWood',
-    #                       expected_dir="/Users/mdelaroca/Documents/sandbox_db/storage_01/"
-    #                                    "picturae/delivery/CP1_20230626_BATCH_0001/undatabased")
+#     logger = logging.getLogger("full_run")
+#
 #     test_config = get_config(config="Botany_PIC")
 #
 #     date_override = None
-#
-#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', config=test_config, tnrs_ignore=False)
-#
+# #
+#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', covered_ignore=True,  config=test_config,
+#                       tnrs_ignore=False)
+# #
 # full_run()

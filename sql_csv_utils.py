@@ -8,8 +8,7 @@ import string_utils
 import sys
 from specify_db import SpecifyDb
 import logging
-
-
+from typing import Union
 class DatabaseConnectionError(Exception):
     pass
 
@@ -17,7 +16,7 @@ class SqlCsvTools:
     def __init__(self, config, logging_level=logging.INFO):
         self.config = config
         self.specify_db_connection = SpecifyDb(db_config_class=self.config)
-        self.logger = logging.getLogger("SqlCsvTools")
+        self.logger = logging.getLogger(f'Client.' + self.__class__.__name__)
         self.logger.setLevel(logging_level)
         self.check_db_connection()
 
@@ -50,6 +49,10 @@ class SqlCsvTools:
         """dbtools get_one_record"""
         return self.specify_db_connection.get_one_record(sql=sql)
 
+    def get_records(self, sql):
+
+        return self.specify_db_connection.get_records(query=sql)
+
     def get_cursor(self):
         """standard db cursor"""
         return self.specify_db_connection.get_cursor()
@@ -72,25 +75,25 @@ class SqlCsvTools:
         """
         sql = f'''SELECT AgentID FROM agent'''
         statement_count = 0
-        if not pd.isna(first_name):
+        if not pd.isna(first_name) and first_name != '':
             statement_count += 1
             sql += f''' WHERE FirstName = "{first_name}"'''
         else:
             statement_count += 1
             sql += f''' WHERE FirstName IS NULL'''
 
-        if not pd.isna(last_name):
+        if not pd.isna(last_name) and last_name != '':
             sql += f''' AND LastName = "{last_name}"'''
 
         else:
             sql += f''' AND LastName IS NULL'''
 
-        if not pd.isna(middle_initial):
+        if not pd.isna(middle_initial) and middle_initial != '':
             sql += f''' AND MiddleInitial = "{middle_initial}"'''
         else:
             sql += f''' AND MiddleInitial IS NULL'''
 
-        if not pd.isna(title):
+        if not pd.isna(title) and title != '':
             sql += f''' AND Title = "{title}"'''
         else:
             sql += f''' AND Title IS NULL'''
@@ -295,7 +298,7 @@ class SqlCsvTools:
 
             return result_id
 
-    def insert_taxa_added_record(self, taxon_list, df: pd.DataFrame):
+    def insert_taxa_added_record(self, taxon_list, df: pd.DataFrame, agent_id: Union[str, int]):
         """new_taxa_record: creates record level data for any new taxa added to the database,
                             populates useful table for qc and troubleshooting
         args:
@@ -304,19 +307,19 @@ class SqlCsvTools:
             df: pandas dataframe, the record table uploaded to the database in question
             """
         taxa_frame = df[df['fullname'].isin(taxon_list)]
+        taxa_frame = taxa_frame.drop_duplicates(subset=['fullname'])
         for index, row in taxa_frame.iterrows():
-            catalog_number = taxa_frame.columns.get_loc('CatalogNumber')
-            barcode_result = self.get_one_match(tab_name='picturaetaxa_added',
-                                                id_col='CatalogNumber',
-                                                key_col='CatalogNumber',
-                                                match=row[catalog_number],
-                                                match_type=int)
-            if barcode_result is None:
-                sql = self.create_new_tax_tab(row=row, df=taxa_frame, tab_name='picturaetaxa_added')
+            tax_id = self.get_one_match(tab_name='picturaetaxa_added',
+                                        id_col='newtaxID',
+                                        key_col='fullname',
+                                        match=row['fullname'],
+                                        match_type=str)
+            if tax_id is None:
+                sql = self.create_new_tax_tab(row=row, tab_name='picturaetaxa_added', agent_id=agent_id)
 
                 self.insert_table_record(sql=sql)
 
-    def create_new_tax_tab(self, row, df: pd.DataFrame, tab_name: str):
+    def create_new_tax_tab(self, row, tab_name: str, agent_id: Union[str, int]):
         """create_new_tax: does a similar function as create_unmatch_tab,
                             but instead uploads a table of taxa newly added
                             to the database for QC monitoring(make sure no wonky taxa are added)
@@ -325,35 +328,27 @@ class SqlCsvTools:
                 df: new_taxa dataframe in order to get column index numbers
                 tab_name: name of new_taxa table on mysql database.
         """
-        columns = df.columns
-        fullname = columns.get_loc('fullname')
-        catalog_number = columns.get_loc('CatalogNumber')
-        family = columns.get_loc('Family')
-        taxname = columns.get_loc('taxname')
-        hybrid = columns.get_loc('Hybrid')
+        hybrid = string_utils.str_to_bool(row['Hybrid'])
 
         col_list = ["fullname",
                     "TimestampCreated",
                     "TimestampModified",
-                    "CatalogNumber",
+                    "batch_MD5",
                     "family",
                     "name",
-                    "Hybrid",
+                    "hybrid",
                     "CreatedByAgentID",
                     "ModifiedByAgentID"]
 
-
-        val_list = [f"{row[fullname]}",
+        val_list = [f"{row['fullname']}",
                     f"{time_utils.get_pst_time_now_string()}",
                     f"{time_utils.get_pst_time_now_string()}",
-                    f"{row[catalog_number]}",
-                    f"{row[family]}",
-                    f"{row[taxname]}",
-                       row[hybrid],
-                    f"{self.config.AGENT_ID}",
-                    f"{self.config.AGENT_ID}"]
-
-
+                    f"{row['batch_md5']}",
+                    f"{row['Family']}",
+                    f"{row['taxname']}",
+                    hybrid,
+                    f"{agent_id}",
+                    f"{agent_id}"]
 
         val_list, col_list = remove_two_index(val_list, col_list)
 

@@ -23,7 +23,7 @@ def get_config(config: str):
     location = f"config_files/{config}_config.py"
 
     try:
-        if current_dir.endswith("wrangler"):
+        if "wrangler" in os.path.basename(current_dir):
             pass
         else:
             location = "../" + location

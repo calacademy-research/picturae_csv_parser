@@ -26,9 +26,13 @@ class TestingTools:
                 for i in range(num_records):
                     # to keep barcodes matching between folder and specimen csvs for merging
                     ordered_bar = 123456
-                    specimen_bar = ordered_bar + i
-                    # populating rest of columns with random data
+                    if "cover" in path.lower():
+                        specimen_bar = "CAS_" + f"{ordered_bar + i}"
+                    else:
+                        specimen_bar = f"{ordered_bar + i}"
+
                     folder_barcode = "CAS_" + f"{ordered_bar + i}"
+                    # populating rest of columns with random data
                     filler_list = ["abcdefg"] * 8
                     jpg_path = fake.file_path(depth=random.randint(1, 5), category='image', extension='jpg')
                     # writing data to CSV

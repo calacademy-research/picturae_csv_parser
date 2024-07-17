@@ -11,6 +11,47 @@ import os
 from string_utils import remove_non_numerics
 # import list tools
 
+def fill_missing_folder_barcodes(df, spec_bar: str, fold_bar: str, parent_bar: str):
+    """
+    Fills in missing folder barcodes in the dataframe based on the specimen and parent barcodes.
+
+    Args:
+        df: pandas DataFrame to process.
+        spec_bar: The column name containing specimen barcodes.
+        fold_bar: The column name containing folder barcodes.
+        parent_bar: The column name containing parent barcodes.
+
+    Returns:
+        df: The updated pandas DataFrame with filled folder barcodes.
+    """
+    # Create a dictionary to map SPECIMEN-BARCODE to FOLDER-BARCODE
+    specimen_to_folder = df.set_index(spec_bar)[fold_bar].to_dict()
+
+    # Create a dictionary to map PARENT-BARCODE to FOLDER-BARCODE
+    parent_to_folder = df.set_index(parent_bar)[fold_bar].to_dict()
+
+    # Fill missing FOLDER-BARCODE
+    for idx, row in df.iterrows():
+
+        # fill FOLDER-BARCODE using the SPECIMEN-BARCODE from the parent_to_folder dictionary
+        if pd.isna(row[fold_bar]) and pd.notna(row[spec_bar]):
+            folder_barcode = parent_to_folder.get(row[spec_bar])
+            if folder_barcode:
+                df.at[idx, fold_bar] = folder_barcode
+        # if still empty fill using the FOLDER-BARCODE from the specimen_to_folder dictionary
+        if pd.isna(row[fold_bar]) and pd.notna(row[parent_bar]):
+            folder_barcode = specimen_to_folder.get(row[parent_bar])
+            if folder_barcode:
+                df.at[idx, fold_bar] = folder_barcode
+
+    return df
+
+
+def standardize_headers(df):
+    """Convert columns to uppercase and replace spaces with hyphens to standardize alembo headers"""
+    df.columns = [col.upper().replace(" ", "-") for col in df.columns]
+    return df
+
 
 def separate_titles(row, config):
     """used to separate list of likely titles from agent names
