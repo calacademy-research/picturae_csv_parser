@@ -1,8 +1,8 @@
 """tests the rename_cols function, to make sure correct column names are assigned"""
 import unittest
 import pandas as pd
-from tests.pic_csv_test_class import AltCsvCreatePicturae
-from tests.testing_tools import TestingTools
+from .pic_csv_test_class import AltCsvCreatePicturae
+from .testing_tools import TestingTools
 
 class ColNamesTest(unittest.TestCase, TestingTools):
     def __init__(self, *args, **kwargs):

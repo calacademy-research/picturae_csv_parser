@@ -1,8 +1,8 @@
 """tests to test the record_present, barcode_present and image_has_record functions."""
 import unittest
-from tests.pic_csv_test_class import AltCsvCreatePicturae
+from .pic_csv_test_class import AltCsvCreatePicturae
 import pandas as pd
-from tests.testing_tools import TestingTools
+from .testing_tools import TestingTools
 
 class DatabaseChecks(unittest.TestCase, TestingTools):
     def __init__(self, *args, **kwargs):

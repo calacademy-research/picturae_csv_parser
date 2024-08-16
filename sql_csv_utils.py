@@ -165,7 +165,7 @@ class SqlCsvTools:
 
         result = self.get_record(sql=sql)
 
-        if isinstance(result, (list, dict, set, tuple)):
+        if isinstance(result, (list, dict, set)):
             return result[0]
         else:
             return result

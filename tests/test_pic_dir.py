@@ -1,8 +1,8 @@
 import unittest
 import shutil
 import os
-from tests.pic_csv_test_class import AltCsvCreatePicturae
-from tests.testing_tools import TestingTools
+from .pic_csv_test_class import AltCsvCreatePicturae
+from .testing_tools import TestingTools
 from get_configs import get_config
 
 class DirectoryTests(unittest.TestCase, TestingTools):
