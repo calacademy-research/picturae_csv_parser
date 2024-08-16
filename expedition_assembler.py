@@ -11,16 +11,20 @@ import re
 import shutil
 import time
 import multiprocessing
+from get_configs import get_config
 
 class AssembleExpedition:
-    def __init__(self, csv_name):
+    def __init__(self, csv_name, digileap=False):
         self.csv_name = csv_name
         self.expedition_csv = pd.read_csv(os.path.join('nfn_csv', csv_name))
         self.expedition_name = csv_name.replace(".csv", '')
         self.sep = os.path.sep
-        self.resized_prefix = f'{self.sep}storage_01{self.sep}nfn_image_drive{self.sep}' \
-                              f'CAS_for_OCR{os.path.sep}'
-        self.destination_path = f"{self.sep}admin{self.sep}picturae_drive_mount{self.sep}CAS_for_EXP"
+        self.config = get_config(config="Botany_PIC")
+        self.resized_prefix = self.config.RESIZED_PREFIX
+        if digileap:
+            self.destination_path = self.config.DIGILEAP_DESTINATION
+        else:
+            self.destination_path = f"{self.sep}admin{self.sep}picturae_drive_mount{self.sep}CAS_for_EXP"
 
         # Initialize logger
         self.logger = logging.getLogger(__name__)
@@ -118,8 +122,10 @@ if __name__ == "__main__":
 
     parser.add_argument("-cn", "--csv_name", nargs="?", required=True, help="Path of CSV to process", default=None)
 
+    parser.add_argument("-dg", "--digileap", nargs="?", required=False, help="Path of CSV to process", default=False)
+
     args = parser.parse_args()
 
-    assemble_instance = AssembleExpedition(csv_name=args.csv_name)
+    assemble_instance = AssembleExpedition(csv_name=args.csv_name, digileap=args.digileap)
 
     assemble_instance.run_with_restarts()

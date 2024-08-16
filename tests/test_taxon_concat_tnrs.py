@@ -1,8 +1,8 @@
 """tests for the taxon_concat and taxon_check_real function (using tnrs)"""
 import pandas as pd
 import unittest
-from tests.pic_csv_test_class import AltCsvCreatePicturae
-from tests.testing_tools import TestingTools
+from .pic_csv_test_class import AltCsvCreatePicturae
+from .testing_tools import TestingTools
 from taxon_tools.BOT_TNRS import iterate_taxon_resolve
 
 class ConcatTaxonTests(unittest.TestCase, TestingTools):
