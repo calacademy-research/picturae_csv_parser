@@ -686,7 +686,7 @@ class CsvCreatePicturae:
 
             self.record_full['matched_name_author'] = ''
 
-        elif len(bar_tax) > 1:
+        elif len(bar_tax) >= 1:
 
             bar_tax = bar_tax[['CatalogNumber', 'fullname']]
 
@@ -761,8 +761,6 @@ class CsvCreatePicturae:
         self.record_full.loc[rank_mask, 'taxon_id'] = self.record_full.loc[rank_mask, 'fullname'].apply(
             self.sql_csv_tools.taxon_get)
 
-    # def fill_empty_agent:
-
 
 
     def write_upload_csv(self):
@@ -795,7 +793,17 @@ class CsvCreatePicturae:
         else:
             pass
 
-        self.record_full.to_csv(file_path, index=False, encoding='utf-8')
+        # quoting non-numerics/non-bools to prevent punctuation from splitting columns
+
+        cols_to_quote = self.record_full.select_dtypes(include=['object']).columns
+
+        self.record_full[cols_to_quote] = self.record_full[cols_to_quote].astype(str)
+
+        # replacing nas and literal string NA
+
+        self.record_full = self.record_full.fillna(pd.NA).replace({"<NA>": pd.NA})
+
+        self.record_full.to_csv(file_path, index=False, encoding='utf-8', quoting=csv.QUOTE_NONNUMERIC)
 
         self.logger.info(f'DataFrame has been saved to csv as: {file_path}')
 
