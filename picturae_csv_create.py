@@ -269,12 +269,13 @@ class CsvCreatePicturae:
 
         unmarked_dupes = duplicates[duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'COLLECTOR-NUMBER'], keep=False)==False]
 
-        # troubleshooting code uncomment to find falsely marked duplicates
-        # unmarked_all = self.record_full[
-        #     self.record_full['SPECIMEN-BARCODE'].isin(unmarked_dupes['SPECIMEN-BARCODE'])]
-        #
-        # unmarked_all.to_csv(f'picturae_csv/csv_batch/PIC_upload/test_spec_dup.csv',
-        #                           quoting=csv.QUOTE_NONNUMERIC, index=False)
+        # troubleshooting code uncomment to find incorrectly marked duplicates
+        unmarked_all = self.record_full[
+            self.record_full['SPECIMEN-BARCODE'].isin(unmarked_dupes['SPECIMEN-BARCODE'])]
+
+        if len(unmarked_all) > 0:
+            unmarked_all.to_csv(f'picturae_csv/csv_batch/PIC_upload/spec_dup_{self.date_use}.csv',
+                                      quoting=csv.QUOTE_NONNUMERIC, index=False)
 
         self.record_full = self.record_full.drop(unmarked_dupes.index)
 
@@ -407,7 +408,7 @@ class CsvCreatePicturae:
         else:
             self.logger.info('No missing higher geography: No corrections needed')
 
-        if len(missing_label_csv) > 0:
+        if len(missing_label_csv) > 0 and self.covered_ignore is False:
             missing_label_set = set(missing_label_csv['CatalogNumber'])
             batch_set = set(missing_label_csv['CSV_batch'])
             raise ValueError(f"label covered or folded at barcodes {missing_label_set} "
@@ -656,6 +657,11 @@ class CsvCreatePicturae:
 
         self.record_full['fulltaxon'] = self.record_full['fulltaxon'].str.strip()
 
+        # Assign "Family" value if "fulltaxon" is empty or contains "missing taxon"
+        self.record_full['fulltaxon'] = self.record_full.apply(
+            lambda x: x['Family'] if not x['fulltaxon'] or "missing taxon" in x['fulltaxon'] else x['fulltaxon'], axis=1
+        )
+
         # Query once per unique entry for efficiency
         unique_fulltaxons = self.record_full['fulltaxon'].unique()
 
@@ -666,7 +672,7 @@ class CsvCreatePicturae:
 
         self.record_full['taxon_id'] = self.record_full['taxon_id'].astype(pd.Int64Dtype())
 
-        self.record_full.drop(columns=['fulltaxon'])
+        self.record_full.drop(columns=["fulltaxon"], inplace=True)
 
 
     def taxon_check_tnrs(self):
@@ -742,18 +748,12 @@ class CsvCreatePicturae:
         self.record_full.loc[rank_mask, 'fullname'] = self.record_full.loc[rank_mask, 'name_matched']
 
         # replacing rank for missing rank cases in first intra and full taxon
+        for col in ['fullname', 'first_intra']:
+            self.record_full.loc[rank_mask, col] = \
+                self.record_full.loc[rank_mask, col].str.replace(" subsp. ", " var. ",
+                                                                           regex=False)
 
-        self.record_full.loc[rank_mask, 'first_intra'] = \
-            self.record_full.loc[rank_mask, 'first_intra'].str.replace(" subsp. ", " var. ",
-                                                                       regex=False)
-
-        self.record_full.loc[rank_mask, 'fulltaxon'] = \
-            self.record_full.loc[rank_mask, 'fulltaxon'].str.replace(" subsp. ", " var. ",
-                                                                     regex=False)
-        # executing qualifier separator function
-        self.record_full = separate_qualifiers(self.record_full, tax_col='fulltaxon')
-
-        for col in ['fulltaxon', 'fullname', 'gen_spec', 'first_intra', 'taxname']:
+        for col in ['fullname', 'gen_spec', 'first_intra', 'taxname']:
             self.record_full[col] = self.record_full[col].apply(remove_qualifiers)
 
         # pulling new tax IDs for corrected missing ranks
@@ -801,7 +801,7 @@ class CsvCreatePicturae:
 
         # replacing nas and literal string NA
 
-        self.record_full = self.record_full.fillna(pd.NA).replace({"<NA>": pd.NA})
+        self.record_full = self.record_full.fillna(pd.NA).replace({"<NA>": pd.NA, "nan": pd.NA})
 
         self.record_full.to_csv(file_path, index=False, encoding='utf-8', quoting=csv.QUOTE_NONNUMERIC)
 
@@ -888,3 +888,4 @@ if __name__ == "__main__":
 #                       tnrs_ignore=False)
 # #
 # full_run()
+
