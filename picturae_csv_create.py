@@ -52,6 +52,7 @@ class CsvCreatePicturae:
         self.logger.debug(f"extracting digits from {filepath} to get {string_digits}")
         return string_digits
 
+
     def init_all_vars(self, date_string):
         """init_all_vars:to use for testing and decluttering init function,
                             initializes all class level variables  """
@@ -179,6 +180,18 @@ class CsvCreatePicturae:
             raise ValueError("The resulting DataFrame is empty; no data was loaded.")
 
 
+    def csv_merge_and_clean(self):
+        """csv_merge_and_clean:
+                reads, merges and data wrangles the set of folder and specimen csvs
+        """
+        fold_csv, spec_csv = self.read_folder_and_specimen_csvs()
+
+        self.fill_duplicate_barcodes(spec_csv=spec_csv)
+
+        self.merge_folder_and_specimen_csvs(fold_csv, spec_csv)
+
+        self.remove_duplicate_barcodes()
+
 
     def drop_common_columns(self, csv: pd.DataFrame, folder=False):
         """drops columns duplicate between sheet and cover csvs"""
@@ -191,101 +204,107 @@ class CsvCreatePicturae:
 
         return csv
 
-
-    def csv_merge(self):
-        """csv_merge:
-                merges the folder_csv and the specimen_csv on barcode
-           args:
-                fold_csv: folder level csv to be input as argument for merging
-                spec_csv: specimen level csv to be input as argument for merging
+    def read_folder_and_specimen_csvs(self):
+        """read the folder and specimen CSVs into the environment.
+            args:
+                none
         """
         fold_csv = self.csv_read_path(csv_level="COVER")
         spec_csv = self.csv_read_path(csv_level="SHEET")
 
-        # set this way currently as
-        # the folder name as it appears on the spec sheet is put into specimen barcode on cover
+        # Set the folder barcode column to match the specimen barcode
         fold_csv['FOLDER-BARCODE'] = fold_csv['SPECIMEN-BARCODE']
 
         self.drop_common_columns(fold_csv, folder=True)
-
         self.drop_common_columns(spec_csv)
 
         difference = set(fold_csv['FOLDER-BARCODE']) - set(spec_csv['FOLDER-BARCODE'])
 
         if len(difference) > 0:
-            self.logger.warning(f"Following folder barcode not in specimen csv {difference}")
+            self.logger.warning(f"Following folder barcodes not in specimen csv {difference}")
+
+        return fold_csv, spec_csv
 
 
-        # removing underscore suffix from barcodes
+    def fill_duplicate_barcodes(self, spec_csv):
+        """Populate barcode and Parent barcode based on duplicate records in notes section.
+           args:
+                spec_csv: the specimen level dataframe
+        """
         spec_csv['SPECIMEN-BARCODE'] = spec_csv['SPECIMEN-BARCODE'].apply(remove_barcode_suffix)
 
-        # replacing duplicate barcodes with barcodes from notes section:
         is_duplicate = spec_csv['NOTES'].astype(str).str.contains(r'\d', regex=True)
-
         spec_csv['DUPLICATE'] = is_duplicate
-
         spec_csv['PARENT-BARCODE'] = ''
 
-        # extracting duplicate parent barcode from old image path, before replacing.
         spec_csv.loc[is_duplicate, 'PARENT-BARCODE'] = spec_csv.loc[is_duplicate, 'SPECIMEN-BARCODE']
-
         spec_csv.loc[is_duplicate, 'SPECIMEN-BARCODE'] = spec_csv.loc[
             is_duplicate, 'NOTES'].apply(remove_non_numerics)
 
         spec_csv = fill_missing_folder_barcodes(df=spec_csv, spec_bar="SPECIMEN-BARCODE",
                                                 fold_bar='FOLDER-BARCODE', parent_bar="PARENT-BARCODE")
 
-        # merging folder and specimen csvs
+        return spec_csv
+
+    def merge_folder_and_specimen_csvs(self, fold_csv, spec_csv):
+        """define self.record_full, Merge the folder and specimen CSVs and fill missing values.
+            args:
+                fold_csv: the folder level csv
+                spec_csv: the specimen level csv
+        """
+
         self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
-
-        # filling na
         self.record_full.fillna('', inplace=True)
-
-        # renaming notes for sheet vs cover
         self.record_full.rename(columns={"NOTES_x": "cover_notes", "NOTES_y": "sheet_notes"}, inplace=True)
 
-        # checking if any specimen barcodes did not match to folder barcode
         spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
 
-        spec_difference = list(spec_difference)
+        # checking for specimen barcodes not matched to folder barcode
+        if spec_difference:
+            spec_difference = list(spec_difference)
+            spec_difference.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
 
-        spec_difference.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
+            filtered_spec_csv = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
+            csv_batch_unmatch = filtered_spec_csv['CSV-BATCH'].unique()
 
-        # Filter spec_csv to include only rows where SPECIMEN-BARCODE is in spec_difference
-        filtered_spec_csv = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
-
-        csv_batch_unmatch = filtered_spec_csv['CSV-BATCH'].unique()
-
-        if len(spec_difference) > 0:
             raise ValueError(f"In the following batches {csv_batch_unmatch}, the"
                              f" following barcodes not matched to a folder {spec_difference}")
 
 
-        # checking post-merge lengths
+    def remove_duplicate_barcodes(self):
+        """Removing and saving rows with improperly marked duplicate records for further visual QC"""
 
         merge_len = len(self.record_full)
 
+        # checking for improperly marked duplicates where specimen barcode is doubled instead of replaced
         duplicates = self.record_full[self.record_full.duplicated(subset='SPECIMEN-BARCODE', keep=False)]
 
-        unmarked_dupes = duplicates[duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'COLLECTOR-NUMBER'], keep=False)==False]
+        # where specimen barcode is duplicated, but collector-number is NOT duplicated.
+        unmarked_dupes = duplicates[
+            duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'COLLECTOR-NUMBER'], keep=False) == False]
 
-        # troubleshooting code uncomment to find incorrectly marked duplicates
         unmarked_all = self.record_full[
             self.record_full['SPECIMEN-BARCODE'].isin(unmarked_dupes['SPECIMEN-BARCODE'])]
 
+        # checking for duplicate rows
+        self.record_full = self.record_full.drop(unmarked_dupes.index)
+        self.record_full = self.record_full.drop_duplicates()
+
+        # getting range of csv dates and writing unmarked duplicates to csv
+        batch_date_list = self.record_full['CSV_batch'].apply(extract_digits, args=(8,))
+
+        # re-assigning date_use to a range of dates
+        if self.date_use is None:
+            self.date_use = f"{batch_date_list.min()}_{batch_date_list.max()}"
+
         if len(unmarked_all) > 0:
             unmarked_all.to_csv(f'picturae_csv/csv_batch/PIC_upload/spec_dup_{self.date_use}.csv',
-                                      quoting=csv.QUOTE_NONNUMERIC, index=False)
-
-        self.record_full = self.record_full.drop(unmarked_dupes.index)
-
-        self.record_full = self.record_full.drop_duplicates()
+                                quoting=csv.QUOTE_NONNUMERIC, index=False)
 
         unique_len = len(self.record_full)
 
         if merge_len > unique_len:
-            self.logger.error(f"Detected {merge_len-unique_len} duplicate records")
-
+            self.logger.error(f"Detected {merge_len - unique_len} duplicate records")
 
 
     def csv_colnames(self):
@@ -628,6 +647,7 @@ class CsvCreatePicturae:
 
         self.record_full = self.record_full.drop(columns='file_path_digits')
 
+
     def check_if_images_present(self):
         """checks that each image exists, creating boolean column for later use"""
 
@@ -771,12 +791,7 @@ class CsvCreatePicturae:
                                        'start_date_day', 'start_date_year', 'end_date_month',
                                        'end_date_day', 'end_date_year'], inplace=True)
 
-        batch_date_list = self.record_full['CSV_batch'].apply(extract_digits, args=(8,))
-
-        if self.date_use is not None:
-            file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{self.date_use}.csv"
-        else:
-            file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{batch_date_list.min()}_{batch_date_list.max()}.csv"
+        file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{self.date_use}.csv"
 
         if self.tnrs_ignore is False:
             taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
@@ -813,9 +828,8 @@ class CsvCreatePicturae:
         to_current_directory()
         # verifying file presence
         self.file_present()
-        # # modifying linking csv
-        # merging csv files
-        self.csv_merge()
+        # merging and cleaning csv files
+        self.csv_merge_and_clean()
         # renaming columns
         self.csv_colnames()
         # cleaning data
@@ -874,18 +888,3 @@ if __name__ == "__main__":
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, date_string=args.date, logging_level=args.log_level,
                                               tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore)
-
-#
-# def full_run():
-#     """testing function to run just the first piece of the upload process"""
-#     logger = logging.getLogger("full_run")
-#
-#     test_config = get_config(config="Botany_PIC")
-#
-#     date_override = None
-# #
-#     CsvCreatePicturae(date_string=date_override, logging_level='DEBUG', covered_ignore=True,  config=test_config,
-#                       tnrs_ignore=False)
-# #
-# full_run()
-
