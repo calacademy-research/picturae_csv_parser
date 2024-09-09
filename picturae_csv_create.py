@@ -186,7 +186,7 @@ class CsvCreatePicturae:
         """
         fold_csv, spec_csv = self.read_folder_and_specimen_csvs()
 
-        self.fill_duplicate_barcodes(spec_csv=spec_csv)
+        spec_csv = self.fill_duplicate_barcodes(spec_csv=spec_csv)
 
         self.merge_folder_and_specimen_csvs(fold_csv, spec_csv)
 
@@ -244,7 +244,45 @@ class CsvCreatePicturae:
         spec_csv = fill_missing_folder_barcodes(df=spec_csv, spec_bar="SPECIMEN-BARCODE",
                                                 fold_bar='FOLDER-BARCODE', parent_bar="PARENT-BARCODE")
 
+        spec_csv = self.update_duplicate_notes(spec_csv=spec_csv)
+
         return spec_csv
+
+    def update_duplicate_notes(self, spec_csv):
+        """Creates grouped list of barcodes that share the same parent barcode and applies to the notes section"""
+        # Group by parent barcode
+        grouped = spec_csv.groupby('PARENT-BARCODE')['SPECIMEN-BARCODE'].apply(list).reset_index()
+        grouped.columns = ['PARENT-BARCODE', 'SPECIMEN-BARCODES']
+
+        # Create a dictionary mapping parent barcodes to specimen barcodes
+        barcode_dict = dict(zip(grouped['PARENT-BARCODE'], grouped['SPECIMEN-BARCODES']))
+
+        # Apply the parse function to update the 'NOTES' column
+        spec_csv = self.parse_duplicate_notes(spec_csv=spec_csv, barcode_dict=barcode_dict)
+
+        return spec_csv
+
+    def parse_duplicate_notes(self, spec_csv, barcode_dict):
+        """Parses a new aggregate duplicate note for barcodes that share the same parent barcode."""
+        self.logger.info(f"{barcode_dict}")
+        for parent_barcode, specimen_barcodes in barcode_dict.items():
+            if parent_barcode:
+                common_list = [parent_barcode] + barcode_dict[parent_barcode]
+                total_barcodes = len(common_list)
+
+                # Update NOTES for each specimen barcode
+                for barcode in common_list:
+
+                    other_barcodes = [b for b in common_list if b != barcode]
+
+                    note_message = f"Multi-mount of {len(common_list)} barcodes. See also {other_barcodes}"
+
+                    spec_csv.loc[spec_csv['SPECIMEN-BARCODE'] == barcode, 'NOTES'] = note_message
+
+            else:
+                pass
+        return spec_csv
+
 
     def merge_folder_and_specimen_csvs(self, fold_csv, spec_csv):
         """define self.record_full, Merge the folder and specimen CSVs and fill missing values.
@@ -291,7 +329,7 @@ class CsvCreatePicturae:
         self.record_full = self.record_full.drop_duplicates()
 
         # getting range of csv dates and writing unmarked duplicates to csv
-        batch_date_list = self.record_full['CSV_batch'].apply(extract_digits, args=(8,))
+        batch_date_list = self.record_full['CSV-BATCH'].apply(extract_digits, args=(8,))
 
         # re-assigning date_use to a range of dates
         if self.date_use is None:
@@ -629,10 +667,10 @@ class CsvCreatePicturae:
             file_name = file_name.lower()            # file_name = file_name.rsplit(".", 1)[0]
             imported = self.image_client.check_image_db_if_filename_imported(collection="Botany",
                                                                   filename=file_name, exact=True)
-            if imported is False:
-                self.record_full.loc[index, 'image_present_db'] = False
-            else:
-                self.record_full.loc[index, 'image_present_db'] = True
+            if not isinstance(imported, bool):
+                raise ValueError(f"Expected a boolean, but got {type(imported)} for file: {file_name}")
+
+            self.record_full.at[index, 'image_present_db'] = imported
 
     def check_barcode_match(self):
         """checks if filepath barcode matches catalog number barcode
