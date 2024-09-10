@@ -662,15 +662,15 @@ class CsvCreatePicturae:
     def image_has_record(self):
         """checks if image name/barcode already in image_db"""
         self.record_full['image_present_db'] = None
-        for index, row in self.record_full.iterrows():
-            file_name = os.path.basename(row['image_path'])
-            file_name = file_name.lower()            # file_name = file_name.rsplit(".", 1)[0]
-            imported = self.image_client.check_image_db_if_filename_imported(collection="Botany",
-                                                                  filename=file_name, exact=True)
-            if not isinstance(imported, bool):
-                raise ValueError(f"Expected a boolean, but got {type(imported)} for file: {file_name}")
 
-            self.record_full.at[index, 'image_present_db'] = imported
+        # Extract file names once and convert to lowercase.
+        self.record_full['file_name'] = self.record_full['image_path'].apply(lambda x: os.path.basename(x).lower())
+
+        self.record_full['image_present_db'] = self.record_full['file_name'].apply(
+            lambda filename: self.image_client.check_image_db_if_filename_imported(
+                collection="Botany", filename=filename, exact=True
+            )
+        )
 
     def check_barcode_match(self):
         """checks if filepath barcode matches catalog number barcode
