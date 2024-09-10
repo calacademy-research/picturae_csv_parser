@@ -275,7 +275,9 @@ class CsvCreatePicturae:
 
                     other_barcodes = [b for b in common_list if b != barcode]
 
-                    note_message = f"Multi-mount of {len(common_list)} barcodes. See also {other_barcodes}"
+                    joined_barcodes = f"[{', '.join(other_barcodes)}]"
+
+                    note_message = f"Multi-mount of {total_barcodes} barcodes. See also {joined_barcodes}"
 
                     spec_csv.loc[spec_csv['SPECIMEN-BARCODE'] == barcode, 'NOTES'] = note_message
 
