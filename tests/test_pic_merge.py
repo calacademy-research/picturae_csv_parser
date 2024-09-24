@@ -21,11 +21,12 @@ class CsvReadMergeTests(unittest.TestCase, TestingTools):
           so that test merges and uploads can be performed.
           """
         # print("setup called!")
-        self.test_csv_create_picturae = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
+        self.test_csv_create_picturae = AltCsvCreatePicturae(logging_level='DEBUG')
         # maybe create a separate function for setting up test directories
 
-        self.dir_path = self.picturae_config.DATA_FOLDER + f"{self.md5_hash}"
+        self.dir_path = self.picturae_config.DATA_FOLDER + f"csv_batch_{self.md5_hash}"
 
+        self.test_csv_create_picturae.dir_path = self.dir_path
 
         expected_folder_path = self.dir_path + \
                                self.picturae_config.CSV_FOLD + f"{self.md5_hash}" + "_BATCH_0001.csv"
@@ -41,8 +42,11 @@ class CsvReadMergeTests(unittest.TestCase, TestingTools):
 
         open(expected_folder_path, 'a').close()
         open(expected_specimen_path, 'a').close()
+
         # writing csvs
         self.create_fake_dataset(path_list=path_list, num_records=50)
+
+        self.test_csv_create_picturae.file_present()
 
 
 

@@ -12,7 +12,7 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
     def setUp(self):
         """creates fake taxon columns in
            dummy dataset to test out taxon_concat string output"""
-        self.test_csv_pic = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
+        self.test_csv_pic = AltCsvCreatePicturae(logging_level='DEBUG')
 
         # jose Gonzalez is a real agent,
         # to make sure true matches are not added to list.

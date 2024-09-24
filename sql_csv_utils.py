@@ -299,11 +299,17 @@ class SqlCsvTools:
         """
 
         if hybrid is False:
-            if "subsp." in name:
+            if "subsp." in name or "var." in name:
                 result_id = self.get_one_match(tab_name="taxon", id_col="TaxonID", key_col="FullName", match=name,
                                                match_type=str)
                 if result_id is None:
-                    name = name.replace(" subsp. ", " var. ")
+                    if "subsp." in name:
+                        name = name.replace(" subsp. ", " var. ")
+                    elif "var." in name:
+                        name = name.replace(" var. ", " subsp. ")
+                    else:
+                        pass
+
                     result_id = self.get_one_match(tab_name="taxon", id_col="TaxonID", key_col="FullName", match=name,
                                                    match_type=str)
             else:

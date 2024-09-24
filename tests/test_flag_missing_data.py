@@ -3,16 +3,16 @@ import pandas as pd
 from unittest.mock import patch, MagicMock
 from .pic_csv_test_class import AltCsvCreatePicturae
 from .testing_tools import TestingTools
+
 class TestDataFlagging(unittest.TestCase, TestingTools):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.md5_hash = self.generate_random_md5()
 
     def setUp(self):
         # data for record_full DataFrame
 
         # Instance of the class where flag_missing_data resides
-        self.test_csv_create_picturae = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
+        self.test_csv_create_picturae = AltCsvCreatePicturae(logging_level='DEBUG')
 
         self.test_csv_create_picturae.record_full = pd.DataFrame({
             'Rank 1': ['subsp.', None, 'var.', '', None],

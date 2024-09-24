@@ -7,13 +7,12 @@ from .testing_tools import TestingTools
 class DatabaseChecks(unittest.TestCase, TestingTools):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.md5_hash = self.generate_random_md5()
     def setUp(self):
         """creates fake dataset with dummy columns,
           that have a small subset of representative real column names,
         """
         # initializing
-        self.test_csv_create_picturae = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
+        self.test_csv_create_picturae = AltCsvCreatePicturae(logging_level='DEBUG')
 
         # creating dummy dataset, one mistake 530923 != 530924 inserted on purpose
         # the test barcode that is set to return a false is 58719322,

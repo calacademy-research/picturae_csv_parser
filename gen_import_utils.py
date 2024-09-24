@@ -79,17 +79,37 @@ def separate_titles(row, config):
 
     return row
 
-def validate_date(date_string, date_format="%Y-%m-%d"):
-    """validate_date:validates whether a date string is on the calendar, accounting for leap years
-        args:
-            date_string: date in string form
-            date_format: desired format for date, default to YYYY-MM-DD
+
+def validate_date(date_string):
     """
-    try:
-        datetime.strptime(date_string, date_format)
+    validate_date: Validates whether a date string is on the calendar, accounting for leap years.
+    Automatically selects the format based on the length of the date string:
+    - 4 characters: YYYY
+    - 7 characters: YYYY-MM
+    - 10 characters: YYYY-MM-DD
+    Args:
+        date_string: Date in string form (e.g., YYYY, YYYY-MM, YYYY-MM-DD)
+
+    Returns:
+        True if the date is valid according to its detected format; False otherwise.
+    """
+    if date_string and pd.notna(date_string):
+        if len(date_string) == 4:
+            date_format = "%Y"  # YYYY
+        elif len(date_string) == 7:
+            date_format = "%Y-%m"  # YYYY-MM
+        elif len(date_string) == 10:
+            date_format = "%Y-%m-%d"  # YYYY-MM-DD
+        else:
+            return False
+
+        try:
+            datetime.strptime(date_string, date_format)
+            return True
+        except ValueError:
+            return False
+    else:
         return True
-    except ValueError:
-        return False
 
 
 def format_date_columns(year, month, day):
@@ -97,16 +117,12 @@ def format_date_columns(year, month, day):
        and concatenates them into one YYYY-MM-DD date.
     """
     if not pd.isna(year) and year != "":
-        date_str = "\'"
+        date_str = ""
         date_str += f"{int(year):04d}"
         if not pd.isna(month) and month != "":
             date_str += f"-{int(month):02d}"
-        else:
-            date_str += f"-01"
-        if not pd.isna(day) and day != "":
-            date_str += f"-{int(day):02d}"
-        else:
-            date_str += f"-01"
+            if not pd.isna(day) and day != "":
+                date_str += f"-{int(day):02d}"
         return date_str
     else:
         return ""
