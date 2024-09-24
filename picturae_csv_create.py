@@ -433,12 +433,13 @@ class CsvCreatePicturae:
         """
         # flags in missing rank columns when > 1 infra-specific rank.
 
-        missing_rank = (self.record_full['Rank 1'].isna() | self.record_full['Rank 1'] == '') & \
-                       (self.record_full['Rank 2'].isna() | self.record_full['Rank 2'] == '') & \
-                       (~self.record_full['Epithet 1'].isna() & self.record_full['Epithet 1'] != '') & \
-                       (~self.record_full['Epithet 2'].isna() & self.record_full['Epithet 2'] != '')
+        rank1_missing = self.record_full['Rank 1'].isna() | (self.record_full['Rank 1'] == '') & \
+                        self.record_full['Epithet 1'].notna() & (self.record_full['Epithet 1'] != '')
 
-        missing_rank_csv = self.record_full.loc[missing_rank]
+        rank2_missing = self.record_full['Rank 2'].isna() | (self.record_full['Rank 2'] == '') & \
+                        self.record_full['Epithet 2'].notna() & (self.record_full['Epithet 2'] != '')
+
+        missing_rank_csv = self.record_full.loc[rank1_missing & rank2_missing]
 
         # flags if missing higher geography
 
