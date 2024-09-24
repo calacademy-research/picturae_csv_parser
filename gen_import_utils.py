@@ -1,6 +1,7 @@
 """Docstring: This is a utility file, outlining various useful functions to be used
    for csv and image import related tasks.
 """
+import logging
 from datetime import datetime
 import sys
 import numpy as np
@@ -8,7 +9,8 @@ import pandas as pd
 import hmac
 import settings
 import os
-from string_utils import remove_non_numerics
+from dateutil.parser import parse
+
 # import list tools
 
 def fill_missing_folder_barcodes(df, spec_bar: str, fold_bar: str, parent_bar: str):
@@ -83,30 +85,22 @@ def separate_titles(row, config):
 def validate_date(date_string):
     """
     validate_date: Validates whether a date string is on the calendar, accounting for leap years.
-    Automatically selects the format based on the length of the date string:
-    - 4 characters: YYYY
-    - 7 characters: YYYY-MM
-    - 10 characters: YYYY-MM-DD
+    Is agnostic to formats between  YYYY, YYYY-MM, YYYY-MM-DD)
     Args:
-        date_string: Date in string form (e.g., YYYY, YYYY-MM, YYYY-MM-DD)
+        date_string: Date in string form.
 
     Returns:
         True if the date is valid according to its detected format; False otherwise.
     """
     if date_string and pd.notna(date_string):
-        if len(date_string) == 4:
-            date_format = "%Y"  # YYYY
-        elif len(date_string) == 7:
-            date_format = "%Y-%m"  # YYYY-MM
-        elif len(date_string) == 10:
-            date_format = "%Y-%m-%d"  # YYYY-MM-DD
-        else:
+        if len(date_string.split('-')[0]) != 4:
+            logging.error("Year must be 4 digits.")
             return False
-
         try:
-            datetime.strptime(date_string, date_format)
+            parse(date_string, fuzzy=False)
             return True
-        except ValueError:
+        except Exception as e:
+            logging.error(f"{e}")
             return False
     else:
         return True
@@ -265,3 +259,4 @@ def generate_token(timestamp, filename):
 def get_row_value_or_default(row, column_name, default_value=None):
     """used to return row values where column may or may not be present in dataframe"""
     return row[column_name] if column_name in row else default_value
+
