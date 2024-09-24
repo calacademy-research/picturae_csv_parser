@@ -79,6 +79,18 @@ def separate_titles(row, config):
 
     return row
 
+def validate_date(date_string, date_format="%Y-%m-%d"):
+    """validate_date:validates whether a date string is on the calendar, accounting for leap years
+        args:
+            date_string: date in string form
+            date_format: desired format for date, default to YYYY-MM-DD
+    """
+    try:
+        datetime.strptime(date_string, date_format)
+        return True
+    except ValueError:
+        return False
+
 
 def format_date_columns(year, month, day):
     """format_date_columns: gathers year, month, day columns

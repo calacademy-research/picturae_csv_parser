@@ -115,13 +115,16 @@ class SqlCsvTools:
             args:
                 match = the hybrid term of a taxonomic name e.g Genus A x B,
                         match - "A X B"
+                fullname = the full name of the taxonomic name.
         """
         parts = match.split()
         if len(parts) == 3:
+            basename = fullname.split()[0]
             sql = f'''SELECT TaxonID FROM taxon WHERE 
                       LOWER(FullName) LIKE "%{parts[0]}%" 
                       AND LOWER(FullName) LIKE "%{parts[1]}%"
-                      AND LOWER(FullName) LIKE "%{parts[2]}%";'''
+                      AND LOWER(FullName) LIKE "%{parts[2]}%"
+                      AND LOWER(FullName) LIKE "%{basename}%";'''
 
             result = self.specify_db_connection.get_records(query=sql)
 
@@ -288,10 +291,24 @@ class SqlCsvTools:
         return sql
 
     def taxon_get(self, name, hybrid=False, taxname=None):
+        """taxon_get: function to retrieve taxon id from specify database:
+            args:
+                name: the full taxon name to check
+                hybrid: whether the taxon name belongs to a hybrid
+                taxname: the name ending substring of a taxon name, only useful for retrieving hybrids.
+        """
 
         if hybrid is False:
-            result_id = self.get_one_match(tab_name="taxon", id_col="TaxonID", key_col="FullName", match=name,
-                                           match_type=str)
+            if "subsp." in name:
+                result_id = self.get_one_match(tab_name="taxon", id_col="TaxonID", key_col="FullName", match=name,
+                                               match_type=str)
+                if result_id is None:
+                    name = name.replace(" subsp. ", " var. ")
+                    result_id = self.get_one_match(tab_name="taxon", id_col="TaxonID", key_col="FullName", match=name,
+                                                   match_type=str)
+            else:
+                result_id = self.get_one_match(tab_name="taxon", id_col="TaxonID", key_col="FullName", match=name,
+                                               match_type=str)
             return result_id
         else:
             result_id = self.get_one_hybrid(match=taxname, fullname=name)

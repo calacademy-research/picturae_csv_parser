@@ -69,7 +69,7 @@ class CsvReadMergeTests(unittest.TestCase, TestingTools):
         """test merge with sample data set , checks if shared columns are removed,
            and that the merge occurs with expected # of columns"""
         # -1 as merge function drops duplicate columns automatically
-        self.test_csv_create_picturae.csv_merge()
+        self.test_csv_create_picturae.csv_merge_and_clean()
         self.assertEqual(len(self.test_csv_create_picturae.record_full.columns), 10)
 
     def test_index_length_matches(self):
@@ -78,7 +78,7 @@ class CsvReadMergeTests(unittest.TestCase, TestingTools):
            folder and specimen csvs should
            always be a 100% match on barcodes
            """
-        self.test_csv_create_picturae.csv_merge()
+        self.test_csv_create_picturae.csv_merge_and_clean()
         csv_folder = self.test_csv_create_picturae.csv_read_path('SHEET')
         # test merge index before and after
         self.assertEqual(len(self.test_csv_create_picturae.record_full),
@@ -88,7 +88,7 @@ class CsvReadMergeTests(unittest.TestCase, TestingTools):
         """tests whether the set of barcodes in the
            specimen sheet matches the set of barcodes in the merged dataframe"""
         # testing output
-        self.test_csv_create_picturae.csv_merge()
+        self.test_csv_create_picturae.csv_merge_and_clean()
         csv_specimen = self.test_csv_create_picturae.csv_read_path(csv_level="SHEET")
         self.assertEqual(set(self.test_csv_create_picturae.record_full['FOLDER-BARCODE']),
                          set(csv_specimen['FOLDER-BARCODE']))
@@ -96,7 +96,7 @@ class CsvReadMergeTests(unittest.TestCase, TestingTools):
     def test_output_isnot_empty(self):
         """tests whether merge function accidentally
            produces an empty dataframe"""
-        self.test_csv_create_picturae.csv_merge()
+        self.test_csv_create_picturae.csv_merge_and_clean()
         # testing output
         self.assertFalse(self.test_csv_create_picturae.record_full.empty)
 

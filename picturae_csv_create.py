@@ -277,7 +277,7 @@ class CsvCreatePicturae:
 
                     joined_barcodes = f"[{', '.join(other_barcodes)}]"
 
-                    note_message = f"Multi-mount of {total_barcodes} barcodes. See also {joined_barcodes}"
+                    note_message = f"Multi-mount of {total_barcodes} barcodes. See also {joined_barcodes}."
 
                     spec_csv.loc[spec_csv['SPECIMEN-BARCODE'] == barcode, 'NOTES'] = note_message
 
@@ -426,9 +426,11 @@ class CsvCreatePicturae:
         # self.logger.info("merged csv written")
 
 
-
-    def flag_missing_data(self):
-
+    def missing_data_masks(self):
+        """missing_data_masks: create masks and filtered csvs for each kind of relevant missing data to flag.
+            returns:
+                four filtered csvs --> missing_rank_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
+        """
         # flags in missing rank columns when > 1 infra-specific rank.
 
         missing_rank = (self.record_full['Rank 1'].isna() | self.record_full['Rank 1'] == '') & \
@@ -451,30 +453,51 @@ class CsvCreatePicturae:
 
         missing_label_csv = self.record_full.loc[missing_label]
 
+        # flags incorrect start date
+        invalid_start_date = ~self.record_full['start_date'].apply(validate_date)
+
+        invalid_end_date = ~self.record_full['end_date'].apply(validate_date)
+
+        invalid_date_mask = invalid_start_date | invalid_end_date
+
+        invalid_date_csv = self.record_full.loc[invalid_date_mask]
+
+        return missing_rank_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
+
+    def flag_missing_data(self):
+
+        missing_rank_csv, missing_geography_csv, missing_label_csv, invalid_date_csv = self.missing_data_masks()
+
+        # flag incorrect end date
+        message = ""
         if len(missing_rank_csv) > 0:
             missing_rank_set = set(missing_rank_csv['folder_barcode'])
             batch_set = set(missing_rank_csv['CSV_batch'])
-            raise ValueError(f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)} "
-                             f"in batches {batch_set}")
+            message += f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)} in batches {batch_set}\n\n"
         else:
             self.logger.info('no missing ranks: No corrections needed')
 
         if len(missing_geography_csv) > 0:
             missing_geography_set = set(missing_geography_csv['CatalogNumber'])
             batch_set = set(missing_geography_csv['CSV_batch'])
-            raise ValueError(f"rows missing higher geography at barcodes {missing_geography_set} "
-                             f"in batches {batch_set}")
+            message += f"Rows missing higher geography at barcodes {missing_geography_set} in batches {batch_set}\n\n"
         else:
             self.logger.info('No missing higher geography: No corrections needed')
 
         if len(missing_label_csv) > 0 and self.covered_ignore is False:
             missing_label_set = set(missing_label_csv['CatalogNumber'])
             batch_set = set(missing_label_csv['CSV_batch'])
-            raise ValueError(f"label covered or folded at barcodes {missing_label_set} "
-                             f"in batches {batch_set}")
+            message += f"Label covered or folded at barcodes {missing_label_set} in batches {batch_set}\n\n"
         else:
             self.logger.info('No covered or missing labels: No corrections needed')
 
+        if len(invalid_date_csv) > 0:
+            missing_date_set = set(invalid_date_csv['CatalogNumber'])
+            batch_set = set(invalid_date_csv['CSV_batch'])
+            message += f"Invalid dates at {missing_date_set} in batches {batch_set}\n\n"
+
+        if message:
+            raise ValueError(message.strip())
 
 
     def taxon_concat(self, row):
@@ -570,8 +593,16 @@ class CsvCreatePicturae:
         """parses and cleans dataframe columns until ready for upload.
             runs dependent function taxon concat
         """
-        # flagging taxons with multiple missing ranks
+        # concatenate date
+
+        for col_name in list(["start", "end"]):
+            self.record_full[f'{col_name}_date'] = self.record_full.apply(
+                lambda row: format_date_columns(row[f'{col_name}_date_year'],
+                                                row[f'{col_name}_date_month'], row[f'{col_name}_date_day']), axis=1)
+
+        # flagging missing data
         self.flag_missing_data()
+
         self.record_full['verbatim_date'] = self.record_full['verbatim_date'].apply(replace_apostrophes)
         self.record_full['locality'] = self.record_full['locality'].apply(replace_apostrophes)
 
@@ -594,13 +625,6 @@ class CsvCreatePicturae:
 
         self.record_full['image_path'] = self.record_full['CSV_batch'] + f"{os.path.sep}undatabased" + \
                                          f"{os.path.sep}" + self.record_full['image_path']
-
-        # concatenate custom
-
-        for col_name in list(["start", "end"]):
-            self.record_full[f'{col_name}_date'] = self.record_full.apply(
-                 lambda row: format_date_columns(row[f'{col_name}_date_year'],
-                                                 row[f'{col_name}_date_month'], row[f'{col_name}_date_day']), axis=1)
 
 
         # removing leading and trailing space from taxa
@@ -696,6 +720,14 @@ class CsvCreatePicturae:
                                                                         or str_to_bool(row['duplicate']) is True,
                                                                         axis=1)
 
+    def taxon_process_row(self, row):
+        """applies taxon_get to a row of the picturae python dataframe"""
+        taxon_id = self.sql_csv_tools.taxon_get(
+                        name=row['fulltaxon'],
+                        hybrid=str_to_bool(row['Hybrid']),
+                        taxname=row['taxname']
+        )
+        return taxon_id
 
     def check_taxa_against_database(self):
         """check_taxa_against_database:
@@ -723,9 +755,10 @@ class CsvCreatePicturae:
         )
 
         # Query once per unique entry for efficiency
-        unique_fulltaxons = self.record_full['fulltaxon'].unique()
+        unique_fulltaxons = self.record_full[['fulltaxon', 'Hybrid', 'taxname']].drop_duplicates()
 
-        taxon_id_map = {fulltaxon: self.sql_csv_tools.taxon_get(fulltaxon) for fulltaxon in unique_fulltaxons}
+        taxon_id_map = {unique_fulltaxons.apply(self.taxon_process_row, axis=1)
+        }
 
         # Mapping the results back to the original DataFrame
         self.record_full['taxon_id'] = self.record_full['fulltaxon'].map(taxon_id_map)
