@@ -1,6 +1,7 @@
 """Docstring: This is a utility file, outlining various useful functions to be used
    for csv and image import related tasks.
 """
+import logging
 from datetime import datetime
 import sys
 import numpy as np
@@ -8,7 +9,8 @@ import pandas as pd
 import hmac
 import settings
 import os
-from string_utils import remove_non_numerics
+from dateutil.parser import parse
+
 # import list tools
 
 def fill_missing_folder_barcodes(df, spec_bar: str, fold_bar: str, parent_bar: str):
@@ -80,21 +82,41 @@ def separate_titles(row, config):
     return row
 
 
+def validate_date(date_string):
+    """
+    validate_date: Validates whether a date string is on the calendar, accounting for leap years.
+    Is agnostic to formats between  YYYY, YYYY-MM, YYYY-MM-DD)
+    Args:
+        date_string: Date in string form.
+
+    Returns:
+        True if the date is valid according to its detected format; False otherwise.
+    """
+    if date_string and pd.notna(date_string):
+        if len(date_string.split('-')[0]) != 4:
+            logging.error("Year must be 4 digits.")
+            return False
+        try:
+            parse(date_string, fuzzy=False)
+            return True
+        except Exception as e:
+            logging.error(f"{e}")
+            return False
+    else:
+        return True
+
+
 def format_date_columns(year, month, day):
     """format_date_columns: gathers year, month, day columns
        and concatenates them into one YYYY-MM-DD date.
     """
     if not pd.isna(year) and year != "":
-        date_str = "\'"
+        date_str = ""
         date_str += f"{int(year):04d}"
         if not pd.isna(month) and month != "":
             date_str += f"-{int(month):02d}"
-        else:
-            date_str += f"-01"
-        if not pd.isna(day) and day != "":
-            date_str += f"-{int(day):02d}"
-        else:
-            date_str += f"-01"
+            if not pd.isna(day) and day != "":
+                date_str += f"-{int(day):02d}"
         return date_str
     else:
         return ""
@@ -237,3 +259,4 @@ def generate_token(timestamp, filename):
 def get_row_value_or_default(row, column_name, default_value=None):
     """used to return row values where column may or may not be present in dataframe"""
     return row[column_name] if column_name in row else default_value
+

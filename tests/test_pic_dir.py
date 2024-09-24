@@ -8,22 +8,23 @@ from get_configs import get_config
 class DirectoryTests(unittest.TestCase, TestingTools):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.md5_hash = self.generate_random_md5()
         self.picturae_config = get_config(config="Botany_PIC")
-
+        self.md5_hash = self.generate_random_md5()
     """WorkingDirectoryTests: a series of unit tests to verify
         correct working directory, subdirectories."""
     def setUp(self):
         """setUP: unittest setup function creates empty csvs,
                   and folders for given test path"""
         # initializing
-        self.test_csv_create_picturae = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
+        self.test_csv_create_picturae = AltCsvCreatePicturae(logging_level='DEBUG')
 
         if self._testMethodName == "test_missing_folder_raise_error":
             pass
         else:
             # create test directories
-            self.dir_path = self.picturae_config.DATA_FOLDER + f"{self.md5_hash}"
+            self.dir_path = f"{self.picturae_config.DATA_FOLDER}" + f"csv_batch_{self.md5_hash}"
+
+            self.test_csv_create_picturae.dir_path = self.dir_path
 
             expected_folder_path = self.dir_path + \
                                    self.picturae_config.CSV_FOLD + f"{self.md5_hash}" + "_BATCH_0001.csv"
@@ -44,8 +45,7 @@ class DirectoryTests(unittest.TestCase, TestingTools):
         """checks if incorrect sub_directory raises error from file present"""
         with self.assertRaises(ValueError) as cm:
             self.test_csv_create_picturae.file_present()
-        self.assertEqual(str(cm.exception), f"subdirectory for {self.md5_hash} not present")
-
+        self.assertEqual(str(cm.exception), f"picturae csv subdirectory not present")
 
     def test_expected_path_date(self):
         """test_expected_path_date: tests , when the
@@ -63,7 +63,7 @@ class DirectoryTests(unittest.TestCase, TestingTools):
         os.remove(self.dir_path + self.picturae_config.CSV_SPEC + f"{self.md5_hash}" + "_BATCH_0001.csv")
         with self.assertRaises(ValueError) as cm:
             self.test_csv_create_picturae.file_present()
-        self.assertEqual(str(cm.exception), "Specimen csv does not exist")
+        self.assertEqual(str(cm.exception), "Count of Sheet CSVs and Cover CSVs do not match 0 != 1")
 
     def test_raise_folder(self):
         """test_raise_folder: tests whether correct value error
@@ -72,7 +72,7 @@ class DirectoryTests(unittest.TestCase, TestingTools):
         os.remove(self.dir_path + self.picturae_config.CSV_FOLD + f"{self.md5_hash}" + "_BATCH_0001.csv")
         with self.assertRaises(ValueError) as cm:
             self.test_csv_create_picturae.file_present()
-        self.assertEqual(str(cm.exception), "Folder csv does not exist")
+        self.assertEqual(str(cm.exception), "Count of Sheet CSVs and Cover CSVs do not match 1 != 0")
 
     def tearDown(self):
         """destroys paths for Setup function,

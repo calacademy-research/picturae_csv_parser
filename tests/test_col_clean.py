@@ -11,7 +11,7 @@ class ColNamesTest(unittest.TestCase, TestingTools):
     def setUp(self):
         """creates dummy dataset with representative column names"""
         # initializing class
-        self.test_csv_create_picturae = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
+        self.test_csv_create_picturae = AltCsvCreatePicturae(logging_level='DEBUG')
         # creating dummy dataset
         numb_range = list(range(1, 101))
         column_names = ['CSV-BATCH', 'FOLDER-BARCODE',

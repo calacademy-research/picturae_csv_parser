@@ -5,7 +5,7 @@ from specify_db import SpecifyDb
 import logging
 from image_client import ImageClient
 class AltCsvCreatePicturae(CsvCreatePicturae):
-    def __init__(self, date_string, logging_level):
+    def __init__(self, logging_level):
         self.picturae_config = get_config(config="Botany_PIC")
         self.paths = ["test/path/folder"]
         self.tnrs_ignore = True
@@ -13,5 +13,5 @@ class AltCsvCreatePicturae(CsvCreatePicturae):
         self.logger.setLevel(logging_level)
         self.specify_db_connection = SpecifyDb(db_config_class=self.picturae_config)
         self.image_client = ImageClient(config=self.picturae_config)
-        self.init_all_vars(date_string)
+        self.init_all_vars()
 

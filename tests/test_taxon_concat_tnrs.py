@@ -12,7 +12,7 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
     def setUp(self):
         """creates fake taxon columns in
            dummy dataset to test out taxon_concat string output"""
-        self.test_csv_pic = AltCsvCreatePicturae(date_string=self.md5_hash, logging_level='DEBUG')
+        self.test_csv_pic = AltCsvCreatePicturae(logging_level='DEBUG')
 
         # jose Gonzalez is a real agent,
         # to make sure true matches are not added to list.
@@ -56,7 +56,7 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
 
     def test_check_taxon_real(self):
         """tests the TNRS name resolution service in the check_taxon_real function"""
-
+        old_col_length = len(self.test_csv_pic.record_full.columns)
         self.test_csv_pic.record_full[['gen_spec', 'fullname',
                                                    'first_intra',
                                                    'taxname', 'hybrid_base']] = \
@@ -65,7 +65,7 @@ class ConcatTaxonTests(unittest.TestCase, TestingTools):
 
         self.test_csv_pic.taxon_check_tnrs()
         # assert statements
-        self.assertEqual(len(self.test_csv_pic.record_full.columns), 20)
+        self.assertEqual(len(self.test_csv_pic.record_full.columns), old_col_length + 8)
 
         # 3 rows left as the genus level hybrid Serapicamptis and the mispelled "Castilloja" should fail
 
