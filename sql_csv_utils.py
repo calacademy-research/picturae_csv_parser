@@ -9,8 +9,11 @@ import sys
 from specify_db import SpecifyDb
 import logging
 from typing import Union
+
+
 class DatabaseConnectionError(Exception):
     pass
+
 
 class SqlCsvTools:
     def __init__(self, config, logging_level=logging.INFO):
@@ -297,6 +300,7 @@ class SqlCsvTools:
                 hybrid: whether the taxon name belongs to a hybrid
                 taxname: the name ending substring of a taxon name, only useful for retrieving hybrids.
         """
+        name = name.lower()
 
         if hybrid is False:
             if "subsp." in name or "var." in name:

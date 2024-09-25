@@ -6,7 +6,6 @@
 import argparse
 import csv
 import os.path
-import pandas as pd
 from taxon_parse_utils import *
 from gen_import_utils import *
 from string_utils import *
@@ -828,6 +827,25 @@ class CsvCreatePicturae:
         self.record_full.loc[rank_mask, 'taxon_id'] = self.record_full.loc[rank_mask, 'fullname'].apply(
             self.sql_csv_tools.taxon_get)
 
+        if self.tnrs_ignore is False:
+            self.flag_tnrs_rows()
+
+
+    def flag_tnrs_rows(self):
+        """function to flag TNRS rows that do not pass the .99 match threshold"""
+        taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
+                                            (pd.notna(self.record_full['overall_score'])) &
+                                            (self.record_full['overall_score'] != 0)]
+
+        try:
+            taxon_correct_table = taxon_to_correct[['CSV_batch', 'fullname',
+                                                    'name_matched', 'overall_score']].drop_duplicates()
+
+            assert len(taxon_correct_table) <= 0
+
+        except:
+            raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
+                                      f'the following batches: {taxon_correct_table}')
 
 
     def write_upload_csv(self):
@@ -839,21 +857,6 @@ class CsvCreatePicturae:
                                        'end_date_day', 'end_date_year'], inplace=True)
 
         file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{self.date_range}.csv"
-
-        if self.tnrs_ignore is False:
-            taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
-                                                (pd.notna(self.record_full['overall_score'])) &
-                                                (self.record_full['overall_score'] != 0)]
-
-            try:
-                taxon_correct_list = list(taxon_to_correct['CatalogNumber'])
-                assert len(taxon_correct_list) <= 0
-
-            except:
-                raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
-                                          f'the following barcodes: {taxon_correct_list}')
-        else:
-            pass
 
         # quoting non-numerics/non-bools to prevent punctuation from splitting columns
 
@@ -869,6 +872,7 @@ class CsvCreatePicturae:
 
         self.logger.info(f'DataFrame has been saved to csv as: {file_path}')
 
+
     def run_all(self):
         """run_all: runs all methods in the class in order"""
         # setting directory
@@ -882,6 +886,12 @@ class CsvCreatePicturae:
         # cleaning data
         self.col_clean()
 
+        # check taxa against db
+        self.check_taxa_against_database()
+
+        # running taxa through TNRS
+        self.taxon_check_tnrs()
+
         # checking if barcode record present in database
         self.barcode_has_record()
 
@@ -892,12 +902,6 @@ class CsvCreatePicturae:
         self.image_has_record()
         # checking if barcode has valid file name for barcode
         self.check_barcode_match()
-
-        # check taxa against db
-        self.check_taxa_against_database()
-
-        # running taxa through TNRS
-        self.taxon_check_tnrs()
 
         # writing csv for inspection and upload
         self.write_upload_csv()

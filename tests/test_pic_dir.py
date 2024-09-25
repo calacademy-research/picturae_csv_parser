@@ -1,3 +1,4 @@
+"""DirectoryTests: a series of unit tests to verify correct working directory, subdirectories."""
 import unittest
 import shutil
 import os
@@ -10,21 +11,21 @@ class DirectoryTests(unittest.TestCase, TestingTools):
         super().__init__(*args, **kwargs)
         self.picturae_config = get_config(config="Botany_PIC")
         self.md5_hash = self.generate_random_md5()
-    """WorkingDirectoryTests: a series of unit tests to verify
-        correct working directory, subdirectories."""
+
     def setUp(self):
         """setUP: unittest setup function creates empty csvs,
                   and folders for given test path"""
         # initializing
         self.test_csv_create_picturae = AltCsvCreatePicturae(logging_level='DEBUG')
 
+        # create test directories
+        self.dir_path = f"{self.picturae_config.DATA_FOLDER}" + f"csv_batch_{self.md5_hash}"
+
+        self.test_csv_create_picturae.dir_path = self.dir_path
+
         if self._testMethodName == "test_missing_folder_raise_error":
             pass
         else:
-            # create test directories
-            self.dir_path = f"{self.picturae_config.DATA_FOLDER}" + f"csv_batch_{self.md5_hash}"
-
-            self.test_csv_create_picturae.dir_path = self.dir_path
 
             expected_folder_path = self.dir_path + \
                                    self.picturae_config.CSV_FOLD + f"{self.md5_hash}" + "_BATCH_0001.csv"
