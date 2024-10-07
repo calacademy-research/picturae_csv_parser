@@ -409,6 +409,13 @@ class CsvCreatePicturae:
 
         missing_rank_csv = self.record_full.loc[rank1_missing & rank2_missing]
 
+        # flags missing family in column
+
+        missing_family = (self.record_full['Family'].isna() | (self.record_full['Family'] == '') |
+                          (self.record_full['Family'].isnull()))
+
+        missing_family_csv = self.record_full.loc[missing_family]
+
         # flags if missing higher geography
 
         missing_geography = (self.record_full['Country'].isna() | (self.record_full['Country'] == '') |
@@ -430,11 +437,12 @@ class CsvCreatePicturae:
 
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
-        return missing_rank_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
+        return missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
 
     def flag_missing_data(self):
 
-        missing_rank_csv, missing_geography_csv, missing_label_csv, invalid_date_csv = self.missing_data_masks()
+        missing_rank_csv, missing_family_csv, missing_geography_csv,\
+            missing_label_csv, invalid_date_csv = self.missing_data_masks()
 
         # flag incorrect end date
         message = ""
@@ -443,7 +451,14 @@ class CsvCreatePicturae:
             batch_set = set(missing_rank_csv['CSV_batch'])
             message += f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)} in batches {batch_set}\n\n"
         else:
-            self.logger.info('no missing ranks: No corrections needed')
+            self.logger.info(' No missing ranks: No corrections needed')
+
+        if len(missing_family_csv) > 0:
+            missing_family_set = set(missing_family_csv['CatalogNumber'])
+            batch_set = set(missing_family_csv['CSV_batch'])
+            message += f"Rows missing taxonomic family at barcodes {missing_family_set} in batches {batch_set}\n\n"
+        else:
+            self.logger.info('No missing taxonomic families: No corrections needed')
 
         if len(missing_geography_csv) > 0:
             missing_geography_set = set(missing_geography_csv['CatalogNumber'])
@@ -569,10 +584,8 @@ class CsvCreatePicturae:
                 lambda row: format_date_columns(row[f'{col_name}_date_year'],
                                                 row[f'{col_name}_date_month'], row[f'{col_name}_date_day']), axis=1)
 
-
-        self.record_full['verbatim_date'] = self.record_full['verbatim_date'].apply(replace_apostrophes)
-
-        self.record_full['locality'] = self.record_full['locality'].apply(replace_apostrophes)
+        for colname in ['verbatim_date', 'locality', 'collector_number']:
+            self.record_full[colname] = self.record_full[colname].apply(replace_apostrophes)
 
         # flagging missing data
         self.flag_missing_data()
