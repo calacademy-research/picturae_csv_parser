@@ -76,9 +76,9 @@ def assign_collector_titles(first_last, name: str, config):
     first_name_titles = config.AGENT_FIRST_TITLES
     last_name_titles = config.AGENT_LAST_TITLES
     title = ""
-
+    new_name = name
     # Split the full name into words
-    if pd.notna(name) and name != '':
+    if name and pd.notna(name) and name != '':
         name_parts = name.split()
     # Find the title in the name_parts
         if name_parts:
@@ -92,8 +92,6 @@ def assign_collector_titles(first_last, name: str, config):
             else:
                 # If no title is found, assign the full name to the first name
                 new_name = name
-    else:
-        new_name = name
 
     return new_name, title
 

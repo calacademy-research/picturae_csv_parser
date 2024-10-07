@@ -1,6 +1,7 @@
 import unittest
 import pandas as pd
 from unittest.mock import patch, MagicMock
+import numpy as np
 from .pic_csv_test_class import AltCsvCreatePicturae
 from .testing_tools import TestingTools
 
@@ -15,6 +16,7 @@ class TestDataFlagging(unittest.TestCase, TestingTools):
         self.test_csv_create_picturae = AltCsvCreatePicturae(logging_level='DEBUG')
 
         self.test_csv_create_picturae.record_full = pd.DataFrame({
+            'Family': ['Asteraceae', 'Asteraceae', None, np.nan, 'Polemoniaceae'],
             'Rank 1': ['subsp.', None, 'var.', '', None],
             'Rank 2': [None , None, 'f.', '', ''],
             'Epithet 1': ['E1', 'E1', 'E1', 'E1', 'E1'],
@@ -29,12 +31,16 @@ class TestDataFlagging(unittest.TestCase, TestingTools):
         })
 
     def test_missing_data_masks(self):
-        missing_rank_csv, missing_geography_csv, missing_label_csv, invalid_date_csv = \
+        missing_rank_csv, missing_family_csv,  missing_geography_csv, missing_label_csv, invalid_date_csv = \
             self.test_csv_create_picturae.missing_data_masks()
 
         # Test missing ranks
         self.assertEqual(len(missing_rank_csv), 3)
         self.assertTrue({'2', '4', '5'}.issubset(missing_rank_csv['CatalogNumber'].values))
+
+        # test missing family
+        self.assertEqual(len(missing_family_csv), 2)
+        self.assertTrue({'3', '4'}.issubset(missing_family_csv['CatalogNumber'].values))
 
         # Test missing geography
         self.assertEqual(len(missing_geography_csv), 3)  # Expect 3 rows with missing geography
