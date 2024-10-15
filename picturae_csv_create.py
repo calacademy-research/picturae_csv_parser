@@ -585,7 +585,9 @@ class CsvCreatePicturae:
                                                 row[f'{col_name}_date_month'], row[f'{col_name}_date_day']), axis=1)
 
         for colname in ['verbatim_date', 'locality', 'collector_number']:
-            self.record_full[colname] = self.record_full[colname].apply(replace_apostrophes)
+            self.record_full[colname] = self.record_full[colname].apply(
+                lambda x: replace_apostrophes(x).strip() if isinstance(x, str) else x
+            )
 
         # flagging missing data
         self.flag_missing_data()
