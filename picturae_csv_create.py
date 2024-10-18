@@ -384,14 +384,14 @@ class CsvCreatePicturae:
         self.record_full = self.record_full.reindex(columns=col_order_list)
 
         # comment out before committing, code to create simple manifests
-        # self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
+        self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
         #
         self.record_full.rename(columns=col_dict, inplace=True)
 
-        # self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
-        #                         quoting=csv.QUOTE_NONNUMERIC, index=False)
-        #
-        # self.logger.info("merged csv written")
+        self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
+                                quoting=csv.QUOTE_NONNUMERIC, index=False)
+
+        self.logger.info("merged csv written")
 
 
     def missing_data_masks(self):
@@ -922,7 +922,7 @@ class CsvCreatePicturae:
         self.write_upload_csv()
 
 
-#
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Runs checks on Picturae csvs and returns "
@@ -952,3 +952,4 @@ if __name__ == "__main__":
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
                                               tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore)
+
