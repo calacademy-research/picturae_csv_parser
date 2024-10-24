@@ -55,7 +55,7 @@ def extract_after_subtax(text):
             text: the verbatim taxon name that will be parsed.
         returns:
             extracted_text: substring after subtaxa rank"""
-    patterns = ["subsp\.", "var\.", "subvar\.", "f\.", "subform\."]
+    patterns = ["subsp\\.", "var\\.", "subvar\\.", "f\\.", "subform\\."]
 
     for pattern in patterns:
         match = re.search(pattern, text)

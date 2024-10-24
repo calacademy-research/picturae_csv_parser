@@ -494,7 +494,7 @@ class CsvCreatePicturae:
 
         """
         hyb_index = self.record_full.columns.get_loc('Hybrid')
-        is_hybrid = row[hyb_index]
+        is_hybrid = row.iloc[hyb_index]
 
         # defining empty strings for parsed taxon substrings
         full_name = ""
@@ -504,7 +504,7 @@ class CsvCreatePicturae:
         hybrid_base = ""
 
         gen_index = self.record_full.columns.get_loc('Genus')
-        genus = row[gen_index]
+        genus = row.iloc[gen_index]
 
         column_sets = [
             ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2'],
@@ -515,13 +515,13 @@ class CsvCreatePicturae:
         for columns in column_sets:
             for column in columns:
                 index = self.record_full.columns.get_loc(column)
-                if pd.notna(row[index]) and row[index] != '':
+                if pd.notna(row.iloc[index]) and row.iloc[index] != '':
                     if columns == column_sets[0]:
-                        full_name += f" {row[index]}"
+                        full_name += f" {row.iloc[index]}"
                     elif columns == column_sets[1]:
-                        first_intra += f" {row[index]}"
+                        first_intra += f" {row.iloc[index]}"
                     elif columns == column_sets[2]:
-                        gen_spec += f" {row[index]}"
+                        gen_spec += f" {row.iloc[index]}"
 
         full_name = full_name.strip()
         first_intra = first_intra.strip()
@@ -532,10 +532,10 @@ class CsvCreatePicturae:
 
         taxon_strings = separate_string.split()
 
-        second_epithet_in = row[self.record_full.columns.get_loc('Epithet 2')]
-        first_epithet_in = row[self.record_full.columns.get_loc('Epithet 1')]
-        spec_in = row[self.record_full.columns.get_loc('Species')]
-        genus_in = row[self.record_full.columns.get_loc('Genus')]
+        second_epithet_in = row.iloc[self.record_full.columns.get_loc('Epithet 2')]
+        first_epithet_in = row.iloc[self.record_full.columns.get_loc('Epithet 1')]
+        spec_in = row.iloc[self.record_full.columns.get_loc('Species')]
+        genus_in = row.iloc[self.record_full.columns.get_loc('Genus')]
         # changing name variable based on condition
 
         if pd.notna(second_epithet_in) and second_epithet_in != '':
