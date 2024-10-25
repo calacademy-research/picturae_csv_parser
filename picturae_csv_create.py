@@ -263,7 +263,7 @@ class CsvCreatePicturae:
         """
 
         self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
-        self.record_full.fillna('', inplace=True)
+        self.record_full.fillna(np.nan, inplace=True)
         self.record_full.rename(columns={"NOTES_x": "cover_notes", "NOTES_y": "sheet_notes"}, inplace=True)
 
         spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
@@ -618,7 +618,7 @@ class CsvCreatePicturae:
 
         tax_cols = ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2']
 
-        self.record_full[tax_cols] = self.record_full[tax_cols].applymap(
+        self.record_full[tax_cols] = self.record_full[tax_cols].map(
                                            lambda x: x.strip() if isinstance(x, str) else x)
 
 
