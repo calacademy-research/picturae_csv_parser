@@ -5,7 +5,7 @@ charset-normalizer==2.0.11
 docopt==0.6.2
 ExifRead~=3.0.0
 filetype~=1.2.0
-idna==3.3
+idna==3.7
 iniconfig==1.1.1
 packaging==21.3
 parsing
@@ -22,7 +22,7 @@ toml==0.10.2
 urllib3==1.26.19
 yarg==0.1.9
 mysql-connector-python~=9.1.0
-Pillow~=10.2.0
+Pillow~=10.3.0
 anytree~=2.9.0
 colorama~=0.4.6
 pathlib~=1.0.1

@@ -18,9 +18,9 @@ class TestDataFlagging(unittest.TestCase, TestingTools):
         self.test_csv_create_picturae.record_full = pd.DataFrame({
             'Family': ['Asteraceae', 'Asteraceae', None, np.nan, 'Polemoniaceae'],
             'Rank 1': ['subsp.', None, 'var.', '', None],
-            'Rank 2': [None , None, 'f.', '', ''],
+            'Rank 2': [None, None, 'f.', '', ''],
             'Epithet 1': ['E1', 'E1', 'E1', 'E1', 'E1'],
-            'Epithet 2': [None, None, 'E2', 'E2', 'E2'],
+            'Epithet 2': [None, 'E2', 'E2', 'E2', 'E2'],
             'Country': ['USA', None, '', None, 'Brazil'],
             'sheet_notes': ['covered', '', 'folded', '', 'Duplicate[Null]'],
             'start_date': ['2022-01-01', '2023-02-29', '1918-04-31', '2024-02-29', '2022-06-15'],
