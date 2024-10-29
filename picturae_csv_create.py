@@ -18,6 +18,8 @@ from taxon_tools.BOT_TNRS import iterate_taxon_resolve
 from image_client import ImageClient
 starting_time_stamp = datetime.now()
 
+pd.set_option('future.no_silent_downcasting', True)
+
 class IncorrectTaxonError(Exception):
     pass
 
@@ -401,11 +403,11 @@ class CsvCreatePicturae:
         """
         # flags in missing rank columns when > 1 infra-specific rank.
 
-        rank1_missing = self.record_full['Rank 1'].isna() | (self.record_full['Rank 1'] == '') & \
-                        self.record_full['Epithet 1'].notna() & (self.record_full['Epithet 1'] != '')
+        rank1_missing = (self.record_full['Rank 1'].isna() | (self.record_full['Rank 1'] == '')) & \
+                        (self.record_full['Epithet 1'].notna() & (self.record_full['Epithet 1'] != ''))
 
-        rank2_missing = self.record_full['Rank 2'].isna() | (self.record_full['Rank 2'] == '') & \
-                        self.record_full['Epithet 2'].notna() & (self.record_full['Epithet 2'] != '')
+        rank2_missing = (self.record_full['Rank 2'].isna() | (self.record_full['Rank 2'] == '')) & \
+                        (self.record_full['Epithet 2'].notna() & (self.record_full['Epithet 2'] != ''))
 
         missing_rank_csv = self.record_full.loc[rank1_missing & rank2_missing]
 
@@ -425,7 +427,8 @@ class CsvCreatePicturae:
 
         # flags if label is covered or folded.
 
-        missing_label = ["covered" in row.lower() or "folded" in row.lower() for row in self.record_full['sheet_notes']]
+        missing_label = ["covered" in str(row).lower() or "folded" in str(row).lower()
+                         for row in self.record_full['sheet_notes']]
 
         missing_label_csv = self.record_full.loc[missing_label]
 
@@ -438,6 +441,7 @@ class CsvCreatePicturae:
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
         return missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
+
 
     def flag_missing_data(self):
 
@@ -779,8 +783,7 @@ class CsvCreatePicturae:
 
             resolved_taxon = iterate_taxon_resolve(bar_tax)
 
-            resolved_taxon['overall_score'].fillna(0, inplace=True)
-
+            resolved_taxon.fillna({'overall_score': 0}, inplace=True)
 
             resolved_taxon = resolved_taxon.drop(columns=["fullname", "unmatched_terms"])
 
@@ -818,7 +821,7 @@ class CsvCreatePicturae:
 
         self.record_full['missing_rank'] = self.record_full['missing_rank'].replace({'True': True,
                                                                                      'False': False}).astype(bool)
-        # mask for succesful match
+        # mask for successful match
         good_match = (pd.notna(self.record_full['name_matched']) & self.record_full['name_matched'] != '') & \
                      (self.record_full['overall_score'] >= .99)
         # creating mask for missing ranks
