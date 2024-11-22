@@ -26,26 +26,26 @@ def fill_missing_folder_barcodes(df, spec_bar: str, fold_bar: str, parent_bar: s
     Returns:
         df: The updated pandas DataFrame with filled folder barcodes.
     """
-    # Create a dictionary to map SPECIMEN-BARCODE to FOLDER-BARCODE
-    specimen_to_folder = df.set_index(spec_bar)[fold_bar].to_dict()
+    # Create dictionaries for first non-NaN entries of SPECIMEN-BARCODE and PARENT-BARCODE to FOLDER-BARCODE
+    specimen_to_folder = df.dropna(subset=[fold_bar]).drop_duplicates(subset=spec_bar, keep='first').set_index(spec_bar)[fold_bar].to_dict()
+    parent_to_folder = df.dropna(subset=[fold_bar]).drop_duplicates(subset=parent_bar, keep='first').set_index(parent_bar)[fold_bar].to_dict()
 
-    # Create a dictionary to map PARENT-BARCODE to FOLDER-BARCODE
-    parent_to_folder = df.set_index(parent_bar)[fold_bar].to_dict()
+    # Fill NaNs for remaining SPECIMEN-BARCODE and PARENT-BARCODE entries
+    specimen_to_folder = {k: v if pd.notna(v) else df[df[spec_bar] == k][fold_bar].iloc[0] for k, v in specimen_to_folder.items()}
+    parent_to_folder = {k: v if pd.notna(v) else df[df[parent_bar] == k][fold_bar].iloc[0] for k, v in parent_to_folder.items()}
 
-    # Fill missing FOLDER-BARCODE
+    # Fill missing FOLDER-BARCODE values in the DataFrame
     for idx, row in df.iterrows():
-
-        # fill FOLDER-BARCODE using the SPECIMEN-BARCODE from the parent_to_folder dictionary
+        # Fill FOLDER-BARCODE using the SPECIMEN-BARCODE from parent_to_folder dictionary
         if pd.isna(row[fold_bar]) and pd.notna(row[spec_bar]):
             folder_barcode = parent_to_folder.get(row[spec_bar])
             if folder_barcode:
                 df.at[idx, fold_bar] = folder_barcode
-        # if still empty fill using the FOLDER-BARCODE from the specimen_to_folder dictionary
+        # If still empty, fill using the FOLDER-BARCODE from specimen_to_folder dictionary
         if pd.isna(row[fold_bar]) and pd.notna(row[parent_bar]):
             folder_barcode = specimen_to_folder.get(row[parent_bar])
             if folder_barcode:
                 df.at[idx, fold_bar] = folder_barcode
-
     return df
 
 

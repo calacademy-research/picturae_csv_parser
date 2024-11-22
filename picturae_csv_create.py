@@ -18,6 +18,8 @@ from taxon_tools.BOT_TNRS import iterate_taxon_resolve
 from image_client import ImageClient
 starting_time_stamp = datetime.now()
 
+pd.set_option('future.no_silent_downcasting', True)
+
 class IncorrectTaxonError(Exception):
     pass
 
@@ -263,7 +265,7 @@ class CsvCreatePicturae:
         """
 
         self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
-        self.record_full.fillna('', inplace=True)
+        self.record_full.fillna(np.nan, inplace=True)
         self.record_full.rename(columns={"NOTES_x": "cover_notes", "NOTES_y": "sheet_notes"}, inplace=True)
 
         spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
@@ -384,14 +386,14 @@ class CsvCreatePicturae:
         self.record_full = self.record_full.reindex(columns=col_order_list)
 
         # comment out before committing, code to create simple manifests
-        self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
+        # self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
         #
         self.record_full.rename(columns=col_dict, inplace=True)
 
-        self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
-                                quoting=csv.QUOTE_NONNUMERIC, index=False)
-
-        self.logger.info("merged csv written")
+        # self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
+        #                         quoting=csv.QUOTE_NONNUMERIC, index=False)
+        #
+        # self.logger.info("merged csv written")
 
 
     def missing_data_masks(self):
@@ -401,11 +403,11 @@ class CsvCreatePicturae:
         """
         # flags in missing rank columns when > 1 infra-specific rank.
 
-        rank1_missing = self.record_full['Rank 1'].isna() | (self.record_full['Rank 1'] == '') & \
-                        self.record_full['Epithet 1'].notna() & (self.record_full['Epithet 1'] != '')
+        rank1_missing = (self.record_full['Rank 1'].isna() | (self.record_full['Rank 1'] == '')) & \
+                        (self.record_full['Epithet 1'].notna() & (self.record_full['Epithet 1'] != ''))
 
-        rank2_missing = self.record_full['Rank 2'].isna() | (self.record_full['Rank 2'] == '') & \
-                        self.record_full['Epithet 2'].notna() & (self.record_full['Epithet 2'] != '')
+        rank2_missing = (self.record_full['Rank 2'].isna() | (self.record_full['Rank 2'] == '')) & \
+                        (self.record_full['Epithet 2'].notna() & (self.record_full['Epithet 2'] != ''))
 
         missing_rank_csv = self.record_full.loc[rank1_missing & rank2_missing]
 
@@ -425,7 +427,8 @@ class CsvCreatePicturae:
 
         # flags if label is covered or folded.
 
-        missing_label = ["covered" in row.lower() or "folded" in row.lower() for row in self.record_full['sheet_notes']]
+        missing_label = ["covered" in str(row).lower() or "folded" in str(row).lower()
+                         for row in self.record_full['sheet_notes']]
 
         missing_label_csv = self.record_full.loc[missing_label]
 
@@ -438,6 +441,7 @@ class CsvCreatePicturae:
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
         return missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
+
 
     def flag_missing_data(self):
 
@@ -494,7 +498,7 @@ class CsvCreatePicturae:
 
         """
         hyb_index = self.record_full.columns.get_loc('Hybrid')
-        is_hybrid = row[hyb_index]
+        is_hybrid = row.iloc[hyb_index]
 
         # defining empty strings for parsed taxon substrings
         full_name = ""
@@ -504,7 +508,7 @@ class CsvCreatePicturae:
         hybrid_base = ""
 
         gen_index = self.record_full.columns.get_loc('Genus')
-        genus = row[gen_index]
+        genus = row.iloc[gen_index]
 
         column_sets = [
             ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2'],
@@ -515,13 +519,13 @@ class CsvCreatePicturae:
         for columns in column_sets:
             for column in columns:
                 index = self.record_full.columns.get_loc(column)
-                if pd.notna(row[index]) and row[index] != '':
+                if pd.notna(row.iloc[index]) and row.iloc[index] != '':
                     if columns == column_sets[0]:
-                        full_name += f" {row[index]}"
+                        full_name += f" {row.iloc[index]}"
                     elif columns == column_sets[1]:
-                        first_intra += f" {row[index]}"
+                        first_intra += f" {row.iloc[index]}"
                     elif columns == column_sets[2]:
-                        gen_spec += f" {row[index]}"
+                        gen_spec += f" {row.iloc[index]}"
 
         full_name = full_name.strip()
         first_intra = first_intra.strip()
@@ -532,10 +536,10 @@ class CsvCreatePicturae:
 
         taxon_strings = separate_string.split()
 
-        second_epithet_in = row[self.record_full.columns.get_loc('Epithet 2')]
-        first_epithet_in = row[self.record_full.columns.get_loc('Epithet 1')]
-        spec_in = row[self.record_full.columns.get_loc('Species')]
-        genus_in = row[self.record_full.columns.get_loc('Genus')]
+        second_epithet_in = row.iloc[self.record_full.columns.get_loc('Epithet 2')]
+        first_epithet_in = row.iloc[self.record_full.columns.get_loc('Epithet 1')]
+        spec_in = row.iloc[self.record_full.columns.get_loc('Species')]
+        genus_in = row.iloc[self.record_full.columns.get_loc('Genus')]
         # changing name variable based on condition
 
         if pd.notna(second_epithet_in) and second_epithet_in != '':
@@ -618,7 +622,7 @@ class CsvCreatePicturae:
 
         tax_cols = ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2']
 
-        self.record_full[tax_cols] = self.record_full[tax_cols].applymap(
+        self.record_full[tax_cols] = self.record_full[tax_cols].map(
                                            lambda x: x.strip() if isinstance(x, str) else x)
 
 
@@ -779,8 +783,7 @@ class CsvCreatePicturae:
 
             resolved_taxon = iterate_taxon_resolve(bar_tax)
 
-            resolved_taxon['overall_score'].fillna(0, inplace=True)
-
+            resolved_taxon.fillna({'overall_score': 0}, inplace=True)
 
             resolved_taxon = resolved_taxon.drop(columns=["fullname", "unmatched_terms"])
 
@@ -818,7 +821,7 @@ class CsvCreatePicturae:
 
         self.record_full['missing_rank'] = self.record_full['missing_rank'].replace({'True': True,
                                                                                      'False': False}).astype(bool)
-        # mask for succesful match
+        # mask for successful match
         good_match = (pd.notna(self.record_full['name_matched']) & self.record_full['name_matched'] != '') & \
                      (self.record_full['overall_score'] >= .99)
         # creating mask for missing ranks
@@ -922,7 +925,7 @@ class CsvCreatePicturae:
         self.write_upload_csv()
 
 
-
+#
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Runs checks on Picturae csvs and returns "
@@ -952,4 +955,3 @@ if __name__ == "__main__":
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
                                               tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore)
-
