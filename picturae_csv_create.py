@@ -876,6 +876,10 @@ class CsvCreatePicturae:
 
         file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{self.date_range}.csv"
 
+        #adding in blank label data field distinct from notes section
+
+        self.record_full['label_data'] = ""
+
         # quoting non-numerics/non-bools to prevent punctuation from splitting columns
 
         cols_to_quote = self.record_full.select_dtypes(include=['object']).columns
