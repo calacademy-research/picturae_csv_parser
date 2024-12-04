@@ -85,10 +85,11 @@ class AssembleExpedition:
                 os.makedirs(image_folder)
 
             final_path = os.path.join(image_folder, os.path.basename(row['jpg_path']))
-
-            shutil.copy(row['jpg_path'], final_path)
-
-            self.logger.info(f"Copying image at {row['jpg_path']} to {final_path}")
+            if not os.path.exists(final_path):
+                shutil.copy(row['jpg_path'], final_path)
+                self.logger.info(f"Copying image at {row['jpg_path']} to {final_path}")
+            else:
+                self.logger.info(f"image already copied at destination {final_path}")
 
         csv_path = os.path.join(dest_folder, self.csv_name)
 
