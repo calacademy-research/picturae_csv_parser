@@ -440,53 +440,49 @@ class CsvCreatePicturae:
 
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
-        return missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
+        # flags verbatim date too long greater than 50 char
+        invalid_verbatim_mask = self.record_full["verbatim_date"].str.len() > 50
 
+        invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
+
+        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv,
+                invalid_verbatim_csv)
 
     def flag_missing_data(self):
 
-        missing_rank_csv, missing_family_csv, missing_geography_csv,\
-            missing_label_csv, invalid_date_csv = self.missing_data_masks()
+        missing_rank_csv, missing_family_csv, missing_geography_csv, \
+            missing_label_csv, invalid_date_csv, invalid_verbatim_csv = self.missing_data_masks()
 
-        # flag incorrect end date
+        data_flag_dict = {"missing_rank": missing_rank_csv, "missing_family": missing_family_csv,
+                          "missing_geography": missing_geography_csv, "missing_label": missing_label_csv,
+                          "invalid_date": invalid_date_csv, "invalid_verbatim": invalid_verbatim_csv}
+
+        message_dict = {
+            "missing_rank": "Taxonomic names with 2 missing ranks at covers:",
+            "missing_family": "Rows missing taxonomic family at barcodes:",
+            "missing_geography": "Rows missing higher geography at barcodes:",
+            "missing_label": "Label covered or folded at barcodes:",
+            "invalid_date": "Invalid dates at:",
+            "invalid_verbatim": "Verbatim date too long at:",
+        }
+        # flag missing and incorrect data
         message = ""
-        if len(missing_rank_csv) > 0:
-            missing_rank_set = set(missing_rank_csv['folder_barcode'])
-            batch_set = set(missing_rank_csv['CSV_batch'])
-            message += f"Taxonomic names with 2 missing ranks at covers: {list(missing_rank_set)} in batches {batch_set}\n\n"
-        else:
-            self.logger.info(' No missing ranks: No corrections needed')
+        for key, csv_data in data_flag_dict.items():
+            if key == "missing_label" and self.covered_ignore:
+                continue
+            if len(csv_data) > 0:
+                if key in ["missing_rank", "missing_family"]:
+                    item_set = set(csv_data['folder_barcode'])
+                    batch_set = set(csv_data['CSV_batch'])
+                else:
+                    item_set = set(csv_data['CatalogNumber'])
+                    batch_set = set(csv_data['CSV_batch'])
 
-        if len(missing_family_csv) > 0:
-            missing_family_set = set(missing_family_csv['CatalogNumber'])
-            batch_set = set(missing_family_csv['CSV_batch'])
-            message += f"Rows missing taxonomic family at barcodes {missing_family_set} in batches {batch_set}\n\n"
-        else:
-            self.logger.info('No missing taxonomic families: No corrections needed')
-
-        if len(missing_geography_csv) > 0:
-            missing_geography_set = set(missing_geography_csv['CatalogNumber'])
-            batch_set = set(missing_geography_csv['CSV_batch'])
-            message += f"Rows missing higher geography at barcodes {missing_geography_set} in batches {batch_set}\n\n"
-        else:
-            self.logger.info('No missing higher geography: No corrections needed')
-
-        if len(missing_label_csv) > 0 and self.covered_ignore is False:
-            missing_label_set = set(missing_label_csv['CatalogNumber'])
-            batch_set = set(missing_label_csv['CSV_batch'])
-            message += f"Label covered or folded at barcodes {missing_label_set} in batches {batch_set}\n\n"
-        else:
-            self.logger.info('No covered or missing labels: No corrections needed')
-
-        if len(invalid_date_csv) > 0:
-            print(invalid_date_csv['start_date'])
-            missing_date_set = set(invalid_date_csv['CatalogNumber'])
-            batch_set = set(invalid_date_csv['CSV_batch'])
-            message += f"Invalid dates at {missing_date_set} in batches {batch_set}\n\n"
+                message += message_dict[key]
+                message += f" {item_set} in batches {batch_set}\n\n"
 
         if message:
             raise ValueError(message.strip())
-
 
     def taxon_concat(self, row):
         """taxon_concat:
