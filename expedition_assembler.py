@@ -94,8 +94,7 @@ class AssembleExpedition:
         csv_path = os.path.join(dest_folder, self.csv_name)
 
         # Copying over CSV manifest last
-        if not os.path.exists(csv_path):
-            shutil.copy(os.path.join('nfn_csv', self.csv_name), csv_path)
+        shutil.copy(os.path.join('nfn_csv', self.csv_name), csv_path)
 
     def run_with_restarts(self):
         """Runs resizer using multiprocessing and will restart process on non-zero exit code to account for
