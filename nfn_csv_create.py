@@ -1,14 +1,23 @@
 import pandas as pd
 import os
 from get_configs import get_config
+from sql_csv_utils import SqlCsvTools
 from string_utils import remove_non_numerics
 import numpy as np
 import csv
 import re
 import logging
+from geopy.geocoders import Nominatim
+from geopy.exc import GeopyError
+import spacy
+
+from taxon_tools.BOT_TNRS import process_taxon_resolve
 class NfnCsvCreate():
-    def __init__(self, csv_name, coll):
+    def __init__(self, csv_name, coll, config):
         self.csv_name = csv_name
+
+        self.nlp = spacy.load("en_core_web_sm")
+        self.geolocator = Nominatim(user_agent="geoapiExercises")
 
         self.row = None
         self.index = None
@@ -22,6 +31,10 @@ class NfnCsvCreate():
         self.datums = ["WGS", "NAD", "OSGRB", "ETRS", "ED", "GDA", "JGD", "Tokyo", "KGD",
                        "TWD", "BJS", "XAS", "GCJ", "BD", "PZ", "GTRF", "CGCS",
                        "CGS", "ITRF", "ITRS", "SAD"]
+
+        self.sql_csv_tools = SqlCsvTools(config=config)
+
+        self.nominatum_dict = {}
 
 
     def detect_unknown_values(self, string):
@@ -211,6 +224,7 @@ class NfnCsvCreate():
         return coord
 
 
+    # remember to improve this to capture last edge casesw
     def regex_check_TRS(self):
         """compares each TRS entry egainst regex """
         township_regex = re.compile(r'^T?\s*(0?[1-9]|[1-9][0-9])(N|S)$', re.IGNORECASE)
@@ -302,6 +316,90 @@ class NfnCsvCreate():
             self.row[f'Datum_{i}'] = utm_datum
 
 
+    def reverse_trs_spec_descr(self):
+        """checks specimen description to check with TRS percent match and reverse filter rows that contain taxonomy,
+        keeping rows that contain no taxonomy."""
+
+        taxon_frame = pd.DataFrame(self.master_csv[['classification', 'Text1']])
+
+        taxon_frame.rename(columns={'Text1': 'fullname', 'classification': 'CatalogNumber'}, inplace=True)
+
+
+        resolved_taxon = process_taxon_resolve(taxon_frame)
+
+        resolved_taxon.fillna({'overall_score': 0}, inplace=True)
+
+        resolved_taxon.rename(columns={"CatalogNumber": "classification"}, inplace=True)
+
+        if len(resolved_taxon) > 0:
+             self.master_csv = pd.merge(self.master_csv, resolved_taxon, on=["classification"], how="left")
+
+        barcode_counts = self.master_csv["Barcode"].value_counts()
+        is_unique_barcode = self.master_csv["Barcode"].map(barcode_counts) == 1
+
+        # self.master_csv['overall_score'] = pd.to_numeric(self.master_csv['overall_score'], errors='coerce')
+
+        rows_to_drop = self.master_csv.apply(
+            lambda row: (
+                ((self.has_matching_substring(row, "fullname", "name_matched") and
+                pd.notna(row["name_matched"])) or (row['overall_score'] > 0.73) and
+                not is_unique_barcode.loc[row.name]  # Check if Barcode is not unique
+            )),
+            axis=1)
+
+        # # Filter out rows to drop
+        self.master_csv = self.master_csv[~rows_to_drop]
+
+
+
+    def reverse_check_habitat(self):
+        self.master_csv['placename_present'] = self.master_csv['Remarks'].apply(self.extract_places_and_verify)
+
+    def extract_places_and_verify(self, sentence):
+        """
+        Extracts named places from a sentence and verifies their validity using Nominatim.
+
+        Args:
+            sentence (str): The input sentence to analyze.
+
+        Returns:
+            bool: True if at least one valid place is found; False otherwise.
+        """
+        # Initialize Nominatim to use the Dockerized instance
+        self.geolocator = Nominatim(
+            user_agent="your_app_name",
+            timeout=10,
+            scheme="http",
+            domain="localhost:8080"
+        )
+
+        # Extract named entities from the text
+        sentence = str(sentence).lower()
+        doc = self.nlp(sentence)
+        potential_places = [ent.text for ent in doc.ents if ent.label_ in ("GPE", "LOC")]
+
+        # Check each entity if it's a real place
+        if potential_places:
+            for place in potential_places:
+                # check if parsed name scientific by checking taxon tree
+                sql = f'''SELECT TaxonID from taxon WHERE FullName like "%{place}%"'''
+                is_taxon = self.sql_csv_tools.get_record(sql=sql)
+                if "zone" not in place.lower() and pd.isna(is_taxon) is True:
+                    try:
+                        location = self.geolocator.geocode(place)
+                        if location:
+                            return True  # If any place is valid, return True
+                    except GeopyError as e:
+                        print(f"Geopy error for '{place}': {e}")
+                    except Exception as e:
+                        print(f"Unexpected error: {e}")
+            return False
+        else:
+            return False
+
+    def clean_lat_long(self):
+        pass
+
     def gsv_coords(self):
         pass
 
@@ -311,7 +409,12 @@ class NfnCsvCreate():
     def bias_towards_transcriber(self):
         pass
 
+    def has_matching_substring(self, row, column1, column2):
+        fullname_parts = str(row[column1]).split()  # Split fullname into parts
+        name_matched_parts = str(row[column2]).split()  # Split name_matched into parts
 
+        # Check if any part in fullname matches name_matched (case-insensitive)
+        return any(f.lower() == n.lower() for f in fullname_parts for n in name_matched_parts)
 
 
     def run_all_methods(self):
@@ -322,8 +425,13 @@ class NfnCsvCreate():
             self.index = index
             self.clean_elevation()
             self.regex_check_TRS()
+            self.regex_check_UTM()
+            # self.clean_lat_long()
             self.master_csv.loc[self.row.name] = self.row
 
+        self.reverse_trs_spec_descr()
+        self.reverse_check_habitat()
+        print(self.nominatum_dict)
         self.master_csv.to_csv(f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}"
                                f"final_nfn_{remove_non_numerics(self.csv_name)}.csv",
                                sep=',',  # Change to '\t' for tab, '|' for pipe, etc. if needed
@@ -336,6 +444,8 @@ class NfnCsvCreate():
 
 #test
 
-nfn_csv = NfnCsvCreate(csv_name="26925_From_Phlox_Gilia_unreconciled.csv", coll="Botany_PIC")
+pic_config = get_config("Botany_PIC")
+
+nfn_csv = NfnCsvCreate(csv_name="26925_From_Phlox_Gilia_unreconciled.csv", coll="Botany_PIC", config=pic_config)
 
 nfn_csv.run_all_methods()
