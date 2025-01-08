@@ -861,11 +861,45 @@ class CsvCreatePicturae:
             raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
                                       f'the following batches: {taxon_correct_table}')
 
+    def read_and_merge_image_manifest(self):
+        """to keep taxonomic family consistent with herbarium cabinet order,
+            merges the family number from the picturae imaging manifests.
+            Herbarium cabinet family number supersedes 'correct' family assignment.
+        """
+        batch_list = list(set(self.record_full['CSV_batch']))
+        headers = ["type", "folder_barcode", "CatalogNumber", "Family", "Barcode", "Timestamp", "Path"]
+        full_manifest = pd.DataFrame(columns=headers)
+        # reads and concatenates each imaging manifest from the path
+        for batch in batch_list:
+            path_to_csv = f"{self.path_prefix}{batch}{path.sep}{batch}.csv"
+            batch_manifest = pd.read_csv(path_to_csv, names=headers)
+            full_manifest = pd.concat([full_manifest, batch_manifest], ignore_index=True)
+
+        full_manifest = full_manifest.loc[full_manifest['type'].str.lower() == 'folder'.lower()]
+        # keeping only family and cover barcode to merge
+        full_manifest.drop(columns=["type", "CatalogNumber", "Barcode", "Timestamp", "Path"], inplace=True)
+
+        self.record_full = pd.merge(self.record_full, full_manifest, on="folder_barcode")
+
+        # adding boolean column for rows where manifest family number differs from accepted family
+        self.record_full['family_diff'] = self.record_full['Family_x'] != self.record_full['Family_y']
+
+        self.record_full['Family_x'] = self.record_full['Family_y']
+
+        self.record_full.drop(columns="Family_y", inplace=True)
+
+        self.record_full.rename(columns={"Family_x": "Family"}, inplace=True)
+
+
+
 
     def write_upload_csv(self):
         """write_upload_csv: writes a copy of csv to PIC upload
             allows for manual review before uploading.
         """
+
+        self.read_and_merge_image_manifest()
+
         self.record_full.drop(columns=['mostly_handwritten', 'folder_barcode', 'start_date_month',
                                        'start_date_day', 'start_date_year', 'end_date_month',
                                        'end_date_day', 'end_date_year'], inplace=True)
