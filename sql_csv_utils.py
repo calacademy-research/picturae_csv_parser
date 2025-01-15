@@ -133,6 +133,8 @@ class SqlCsvTools:
 
             if result:
                 taxon_id = result[0]
+                if isinstance(taxon_id, tuple):
+                    taxon_id = taxon_id[0]
             else:
                 taxon_id = None
 
