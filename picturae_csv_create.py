@@ -440,8 +440,13 @@ class CsvCreatePicturae:
 
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
-        # flags verbatim date too long greater than 50 char
+        # flags verbatim date too long greater than 50 char and stores them in new label_data column
         invalid_verbatim_mask = self.record_full["verbatim_date"].str.len() > 50
+
+        self.record_full['label_data'] = ""
+
+        self.record_full.loc[invalid_verbatim_mask, 'label_data'] = self.record_full.loc[
+            invalid_verbatim_mask, 'verbatim_date']
 
         invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
 
@@ -471,6 +476,7 @@ class CsvCreatePicturae:
             if key == "missing_label" and self.covered_ignore:
                 continue
             if len(csv_data) > 0:
+                csv_data = csv_data.sort_values(by=['CSV_batch', 'CatalogNumber'])
                 if key in ["missing_rank", "missing_family"]:
                     item_set = set(csv_data['folder_barcode'])
                     batch_set = set(csv_data['CSV_batch'])
@@ -908,7 +914,6 @@ class CsvCreatePicturae:
 
         #adding in blank label data field distinct from notes section
 
-        self.record_full['label_data'] = ""
 
         # quoting non-numerics/non-bools to prevent punctuation from splitting columns
 
