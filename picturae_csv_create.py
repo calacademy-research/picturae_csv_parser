@@ -885,7 +885,7 @@ class CsvCreatePicturae:
         # keeping only family and cover barcode to merge
         full_manifest.drop(columns=["type", "CatalogNumber", "Barcode", "Timestamp", "Path"], inplace=True)
 
-        self.record_full = pd.merge(self.record_full, full_manifest, on="folder_barcode")
+        self.record_full = pd.merge(self.record_full, full_manifest, on="folder_barcode", how="left")
 
         # adding boolean column for rows where manifest family number differs from accepted family
         self.record_full['family_diff'] = self.record_full['Family_x'] != self.record_full['Family_y']

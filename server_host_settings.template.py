@@ -1,3 +1,4 @@
-SERVER_NAME = "10.4.32.170"
-SERVER_PORT = 80
+SERVER_NAME = "ibss-images.calacademy.org"
+SERVER_PREFIX = "https"
+SERVER_PORT = 443
 SERVER_KEY = 'redacted'
