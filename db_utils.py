@@ -1,9 +1,8 @@
 import logging
 import traceback
+import time
 from mysql.connector import errorcode
 import mysql.connector
-import time
-import settings
 
 class DatabaseInconsistentError(Exception):
     pass
@@ -16,15 +15,17 @@ class InvalidFilenameError(Exception):
 class DataInvariantException(Exception):
     pass
 
+
 class DbUtils:
     def __init__(self, database_user, database_password, database_port, database_host, database_name):
-        self.logger = logging.getLogger(f'Client.{self.__class__.__name__}')
         self.database_user = database_user
         self.database_password = database_password
         self.database_port = database_port
         self.database_host = database_host
         self.database_name = database_name
+        self.logger = logging.getLogger(f'Client.{self.__class__.__name__}')
         self.cnx = None
+
 
     @staticmethod
     def retry_with_backoff(max_duration=10800, initial_delay=0):
@@ -48,12 +49,14 @@ class DbUtils:
                     time.sleep(delay)
                     delay += delay + 30  # increasing backoff
 
-                logging.error(f"Failed to execute {func.__name__} within {max_duration} seconds. Last error: {last_error}")
+                logging.error(
+                    f"Failed to execute {func.__name__} within {max_duration} seconds. Last error: {last_error}")
                 return None  # Return None if all retries fail
 
             return wrapper
 
         return decorator
+
 
     @retry_with_backoff()
     def connect(self):
@@ -77,7 +80,7 @@ class DbUtils:
 
         except mysql.connector.Error as err:
             if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-                self.logger.error(f"SQL: Access denied. Host: {settings.SQL_HOST}, User: {settings.SQL_USER}")
+                self.logger.error(f"SQL: Access denied. Host: {self.database_host}, User: {self.database_user}")
                 return False
             elif err.errno == errorcode.ER_BAD_DB_ERROR:
                 self.logger.error("Database does not exist")
@@ -90,49 +93,38 @@ class DbUtils:
             self.logger.error(f"Unknown exception during connection: {err}")
             raise
 
+
+    # added buffered = true so will work properly with forloops
     @retry_with_backoff()
     def get_one_record(self, sql):
-        """Fetches a single record from the database and returns the first column value or None if no result is found."""
-
+        """Fetch a single record from the database with retries."""
         cursor = None
-        retval = None
-
         try:
             cursor = self.get_cursor(buffered=True)
+            if cursor is None:
+                raise mysql.connector.Error("Failed to acquire a database cursor")
+
             cursor.execute(sql)
-            row = cursor.fetchone()  # Fetch one record
-            retval = row[0] if row else None  # Avoids NoneType indexing error
+            retval = cursor.fetchone()
+
+            if retval is None:
+                self.logger.warning(f"Warning: No results from: \n\n{sql}\n")
+            else:
+                retval = retval[0]
 
         except mysql.connector.Error as err:
-            self.logger.error(f"SQL error while processing query: {sql}\n{err}\n")
+            self.logger.error(f"Database error while executing SQL: {sql}\nError: {err}")
+            self.reset_connection()
+            raise  # Raise to trigger the retry
+
+        except Exception as e:
+            self.logger.error(f"Exception thrown while processing SQL: {sql}\n{e}\n")
             self.logger.error(traceback.format_exc())
-
-            if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-                self.logger.error(f"Access denied: User: {self.database_user}, Host: {self.database_host}")
-                retval = None  # Return None since access issues are non-retryable
-
-            elif err.errno == errorcode.ER_BAD_DB_ERROR:
-                self.logger.error("Database does not exist")
-                retval = None  # Non-retryable
-
-            elif err.errno >= 500:
-                self.logger.error("Retryable MySQL error occurred")
-                raise  # Allow retry mechanism to handle it
-
-            else:
-                retval = None  # Non-retryable errors return None
-
-        except Exception as err:
-            self.logger.error(f"Unexpected exception during query execution: {err}")
-            self.logger.error(traceback.format_exc())
-            raise  # Raise for unknown exceptions
+            raise  # Ensure retry is triggered
 
         finally:
             if cursor:
-                cursor.close()  # Ensure cursor is always closed
-
-        if retval is None:
-            self.logger.info(f"Info: No results from query:\n\n{sql}\n")
+                cursor.close()
 
         return retval
 
@@ -145,17 +137,17 @@ class DbUtils:
         cursor.close()
         return record_list
 
-    def reset_connection(self):
-        """Closes the connection and reconnects."""
-        self.logger.info(f"Resetting connection to {settings.SQL_HOST}")
 
+    def reset_connection(self):
+
+        self.logger.info(f"Resetting connection to {self.database_host}")
         if self.cnx:
             try:
                 self.cnx.close()
-            except Exception as e:
-                self.logger.warning(f"Error closing connection: {e}")
-
-        self.connect()  # This will automatically retry with @retry_with_backoff
+            except Exception:
+                pass
+        self.cnx = None
+        self.connect()
 
     def get_cursor(self, buffered=False):
         """Gets a database cursor, ensuring connection is available."""
@@ -167,7 +159,6 @@ class DbUtils:
             self.logger.error("Failed to connect, resetting DB connection")
             self.reset_connection()
             return self.cnx.cursor(buffered=buffered)  # Retry getting the cursor
-
 
     @retry_with_backoff()
     def execute(self, sql):
@@ -198,4 +189,4 @@ class DbUtils:
 
 
     def commit(self):
-        self.cnx.commit()
+            self.cnx.commit()
