@@ -1,5 +1,7 @@
 import logging
+import sys
 import traceback
+import re
 import time
 from mysql.connector import errorcode
 import mysql.connector
@@ -98,9 +100,8 @@ class DbUtils:
     @retry_with_backoff()
     def get_one_record(self, sql):
         """Fetch a single record from the database with retries."""
-        cursor = None
+        cursor = self.get_cursor(buffered=True)
         try:
-            cursor = self.get_cursor(buffered=True)
             if cursor is None:
                 raise mysql.connector.Error("Failed to acquire a database cursor")
 
@@ -112,20 +113,23 @@ class DbUtils:
             else:
                 retval = retval[0]
 
+        except mysql.connector.errors.InterfaceError as err:
+            # Specifically check for "Unread result found" error
+            if "Unread result found" in str(err):
+                self.logger.error(f"Unread result found in SQL: {sql}\n{traceback.format_exc()}")
+                raise  # Re-raise to capture full traceback in logs
+
         except mysql.connector.Error as err:
             self.logger.error(f"Database error while executing SQL: {sql}\nError: {err}")
-            self.reset_connection()
-            raise  # Raise to trigger the retry
+            self.logger.error(traceback.format_exc())  # Capture full traceback
+            raise  # Ensure retry is triggered
 
         except Exception as e:
             self.logger.error(f"Exception thrown while processing SQL: {sql}\n{e}\n")
-            self.logger.error(traceback.format_exc())
+            self.logger.error(traceback.format_exc())  # Capture full traceback
             raise  # Ensure retry is triggered
 
-        finally:
-            if cursor:
-                cursor.close()
-
+        cursor.close()
         return retval
 
     @retry_with_backoff()
@@ -148,6 +152,7 @@ class DbUtils:
                 pass
         self.cnx = None
         self.connect()
+
 
     def get_cursor(self, buffered=False):
         """Gets a database cursor, ensuring connection is available."""
