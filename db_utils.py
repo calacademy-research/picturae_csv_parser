@@ -107,12 +107,11 @@ class DbUtils:
 
             cursor.execute(sql)
             retval = cursor.fetchone()
-
+            cursor.close()
             if retval is None:
                 self.logger.warning(f"Warning: No results from: \n\n{sql}\n")
             else:
                 retval = retval[0]
-
         # Raises ensure retry is triggered
         except mysql.connector.Error as err:
             self.logger.error(f"Database error while executing SQL: {sql}\nError: {err}")
@@ -123,9 +122,6 @@ class DbUtils:
             self.logger.error(f"Exception thrown while processing SQL: {sql}\n{e}\n")
             self.logger.error(traceback.format_exc())
             raise
-        finally:
-            if cursor:
-                cursor.close()
         return retval
 
     @retry_with_backoff()
@@ -138,7 +134,7 @@ class DbUtils:
             cursor.execute(sql)
             record_list = list(cursor.fetchall())
             self.logger.debug(f"get records SQL: {sql}")
-
+            cursor.close()
         # Raises ensure retry is triggered
         except mysql.connector.Error as err:
             self.logger.error(f"Database error while executing SQL: {sql}\nError: {err}")
@@ -149,9 +145,6 @@ class DbUtils:
             self.logger.error(f"Exception thrown while processing SQL: {sql}\n{e}\n")
             self.logger.error(traceback.format_exc())
             raise
-        finally:
-            if cursor:
-                cursor.close()
 
         return record_list
 
@@ -165,19 +158,19 @@ class DbUtils:
             except Exception as e:
                 self.logger.warning(f"Error closing connection: {e}")
 
-        self.connect()  # This will automatically retry with @retry_with_backoff
+        self.connect()
 
 
     def get_cursor(self, buffered=False):
         """Gets a database cursor, ensuring connection is available."""
         try:
             if self.cnx is None or not self.cnx.is_connected():
-                self.connect()  # Let retry_with_backoff handle reconnection
+                self.connect()
             return self.cnx.cursor(buffered=buffered)
         except mysql.connector.OperationalError:
             self.logger.error("Failed to connect, resetting DB connection")
             self.reset_connection()
-            return self.cnx.cursor(buffered=buffered)  # Retry getting the cursor
+            return self.cnx.cursor(buffered=buffered)
 
 
     @retry_with_backoff()
@@ -194,18 +187,18 @@ class DbUtils:
             cursor.execute(sql)
             self.cnx.commit()
             cursor.close()
-            return True  # Execution successful
+            return True
 
         except mysql.connector.Error as err:
             self.logger.error(f"SQL execution failed: {err}")
             if err.errno in {errorcode.CR_SERVER_GONE_ERROR, errorcode.CR_SERVER_LOST}:
-                self.reset_connection()  # Reset on connection loss
+                self.reset_connection()
 
         except Exception as ex:
             self.logger.error(f"Unknown error during SQL execution: {ex}")
-            self.reset_connection()  # Reset and try again
+            self.reset_connection()
 
-        return False  # Return False on failure
+        return False
 
     def commit(self):
         self.cnx.commit()
