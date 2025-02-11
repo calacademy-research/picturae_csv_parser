@@ -113,45 +113,59 @@ class DbUtils:
             else:
                 retval = retval[0]
 
-        except mysql.connector.errors.InterfaceError as err:
-            # Specifically check for "Unread result found" error
-            if "Unread result found" in str(err):
-                self.logger.error(f"Unread result found in SQL: {sql}\n{traceback.format_exc()}")
-                raise  # Re-raise to capture full traceback in logs
-
+        # Raises ensure retry is triggered
         except mysql.connector.Error as err:
             self.logger.error(f"Database error while executing SQL: {sql}\nError: {err}")
-            self.logger.error(traceback.format_exc())  # Capture full traceback
-            raise  # Ensure retry is triggered
+            self.logger.error(traceback.format_exc())
+            raise
 
         except Exception as e:
             self.logger.error(f"Exception thrown while processing SQL: {sql}\n{e}\n")
-            self.logger.error(traceback.format_exc())  # Capture full traceback
-            raise  # Ensure retry is triggered
-
-        cursor.close()
+            self.logger.error(traceback.format_exc())
+            raise
+        finally:
+            if cursor:
+                cursor.close()
         return retval
 
     @retry_with_backoff()
-    def get_records(self, query):
-        cursor = self.get_cursor()
-        cursor.execute(query)
-        record_list = list(cursor.fetchall())
-        self.logger.debug(f"get records SQL: {query}")
-        cursor.close()
+    def get_records(self, sql):
+        """gets multiple records at once"""
+        cursor = self.get_cursor(buffered=True)
+        try:
+            if cursor is None:
+                raise mysql.connector.Error("Failed to acquire a database cursor")
+            cursor.execute(sql)
+            record_list = list(cursor.fetchall())
+            self.logger.debug(f"get records SQL: {sql}")
+
+        # Raises ensure retry is triggered
+        except mysql.connector.Error as err:
+            self.logger.error(f"Database error while executing SQL: {sql}\nError: {err}")
+            self.logger.error(traceback.format_exc())
+            raise
+
+        except Exception as e:
+            self.logger.error(f"Exception thrown while processing SQL: {sql}\n{e}\n")
+            self.logger.error(traceback.format_exc())
+            raise
+        finally:
+            if cursor:
+                cursor.close()
+
         return record_list
 
 
     def reset_connection(self):
-
+        """Closes the connection and reconnects."""
         self.logger.info(f"Resetting connection to {self.database_host}")
         if self.cnx:
             try:
                 self.cnx.close()
-            except Exception:
-                pass
-        self.cnx = None
-        self.connect()
+            except Exception as e:
+                self.logger.warning(f"Error closing connection: {e}")
+
+        self.connect()  # This will automatically retry with @retry_with_backoff
 
 
     def get_cursor(self, buffered=False):
@@ -164,6 +178,7 @@ class DbUtils:
             self.logger.error("Failed to connect, resetting DB connection")
             self.reset_connection()
             return self.cnx.cursor(buffered=buffered)  # Retry getting the cursor
+
 
     @retry_with_backoff()
     def execute(self, sql):
@@ -192,6 +207,5 @@ class DbUtils:
 
         return False  # Return False on failure
 
-
     def commit(self):
-            self.cnx.commit()
+        self.cnx.commit()
