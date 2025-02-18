@@ -42,23 +42,30 @@ class ImageClient:
     def request_with_retries(self, method, url, params=None, data=None, json=None, files=None,
                              max_duration=10800, retry_interval=0):
         """
-        Makes an HTTP request with retries only on connection-related failures.
+        Makes an HTTP request with retries only on connection failures or 5xx server errors.
 
         :parameter
         - method: "GET" or "POST"
         - url: The request URL
         - max_duration: Total retry duration in seconds (default: 3 hours)
-        - retry_interval: Delay between retries in seconds (default: 30 sec)
+        - retry_interval: Delay between retries in seconds (default: 0 sec)
         - files: Dictionary containing file uploads
 
         :returns
-        - Response object if successful
-        - None if all retries fail
+        - Response object if successful (2xx, 3xx, or 4xx)
+        - None if all retries fail or duration expires
         """
         start_time = time.time()
-
+        last_exception = None
+        last_response = None
         while True:
-            last_error = ""
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= max_duration:
+                self.logger.error(
+                    f"Max retry duration reached ({max_duration}s). Giving up. "
+                    f"Returning last exception {last_exception}"
+                )
+                return last_response
 
             # Reopen the file before each retry to prevent it from being empty
             if files:
@@ -66,41 +73,47 @@ class ImageClient:
             else:
                 new_files = None
 
+            # renewing token
+            # source points to the same dictionary and is not a copy, so no need for re-assigment
+            if params or data:
+                source = params if params else data
+                token_root = source.get('filename') or source.get('file_string') or source.get('store')
+                if token_root:
+                    new_token = self.generate_token(filename=token_root)
+                    source['token'] = new_token
+
             try:
                 if method.upper() == "GET":
-                    r = requests.get(url, params=params)
+                    r = requests.get(url, params=params, timeout=10)
                 elif method.upper() == "POST":
-                    r = requests.post(url, data=data, json=json, files=new_files)
+                    r = requests.post(url, data=data, json=json, files=new_files, timeout=10)
                 else:
-                    raise ValueError("Unsupported HTTP method")
+                    self.logger.error(f"Unsupported HTTP method: {method}. Exiting.")
+                    return None  # Break the loop immediately if method is invalid
 
-                # Close reopened files
                 if new_files:
                     for f in new_files.values():
                         f[1].close()
 
-                # If not a server error, return response
-                if r.status_code not in [500, 502, 503, 504]:
+                # If response is not a server error, return it immediately
+                if r.status_code < 500:
                     return r
 
+                # Log and continue retrying if it's a server error (5xx)
                 self.logger.error(
                     f"Server error {r.status_code}: {r.text}, retrying in {retry_interval} sec..."
                 )
+                last_response = r # Keep track of the last response
 
-            except (requests.ConnectionError, requests.Timeout) as e:
-                last_error = e
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= max_duration:
-                    self.logger.error(f"Max retry duration reached ({max_duration}s). Giving up with last error {e}.")
-                    return None
+            except (requests.RequestException, ValueError) as e:
+                self.logger.error(f"Request failed: {e}. Retrying in {retry_interval} sec...")
+                last_exception = e
 
-            retry_interval += retry_interval + 30
-
-            self.logger.error(f"Connection error: {last_error}. Retrying in {retry_interval} sec...")
-
+            # Increase interval and sleep before retrying
             time.sleep(retry_interval)
+            retry_interval += 30
 
-            # If URL contains "/fileupload", send a file delete request before retrying
+            # Optional: Cleanup if needed
             if "/fileupload" in url:
                 self.cleanup_failed_fileupload(data=data)
 
@@ -129,7 +142,6 @@ class ImageClient:
                 pass
         except Exception as e:
             self.logger.error(f"Unexpected error in filedelete: {e}")
-
 
     def split_filepath(self, filepath):
         cur_filename = os.path.basename(filepath)
@@ -344,4 +356,3 @@ class ImageClient:
             assert False
 
         assert False
-
