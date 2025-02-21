@@ -887,10 +887,18 @@ class CsvCreatePicturae:
 
         self.record_full = pd.merge(self.record_full, full_manifest, on="folder_barcode", how="left")
 
-        # adding boolean column for rows where manifest family number differs from accepted family
-        self.record_full['family_diff'] = self.record_full['Family_x'] != self.record_full['Family_y']
+        # adding boolean column for rows where manifest family number differs from accepted family and neither are NA
+        self.record_full['family_diff'] = np.where(
+                                          self.record_full['Family_x'].notna() & self.record_full['Family_y'].notna() &
+                                          self.record_full['Family_x'].str.strip().ne("") & self.record_full['Family_y'].str.strip().ne("") &
+                                          (self.record_full['Family_x'] != self.record_full['Family_y']),
+                                          True, False)
 
-        self.record_full['Family_x'] = self.record_full['Family_y']
+        self.record_full['Family_x'] = np.where(
+            self.record_full['Family_y'].notna() & self.record_full['Family_y'].str.strip().ne(""),
+            self.record_full['Family_y'],
+            self.record_full['Family_x']
+        )
 
         self.record_full.drop(columns="Family_y", inplace=True)
 
