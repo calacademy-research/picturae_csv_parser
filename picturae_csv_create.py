@@ -443,7 +443,10 @@ class CsvCreatePicturae:
         # flags verbatim date too long greater than 50 char and stores them in new label_data column
         invalid_verbatim_mask = self.record_full["verbatim_date"].str.len() > 50
 
+        # adding lable data and new genus boolean
         self.record_full['label_data'] = ""
+
+        self.record_full['new_genus'] = False
 
         self.record_full.loc[invalid_verbatim_mask, 'label_data'] = self.record_full.loc[
             invalid_verbatim_mask, 'verbatim_date']
@@ -720,6 +723,19 @@ class CsvCreatePicturae:
                         hybrid=str_to_bool(row['Hybrid']),
                         taxname=row['taxname']
         )
+        # Check for new genus to verify family assignment
+        new_genus = False
+        if taxon_id is None:
+            genus_id = self.sql_csv_tools.taxon_get(
+                name=row['Genus'],
+                hybrid=str_to_bool(row['Hybrid']),
+                taxname=row['taxname']
+            )
+            if genus_id is None:
+                new_genus = True
+
+        row["new_genus"] = new_genus
+
         return taxon_id
 
     def check_taxa_against_database(self):
