@@ -734,9 +734,7 @@ class CsvCreatePicturae:
             if genus_id is None:
                 new_genus = True
 
-        row["new_genus"] = new_genus
-
-        return taxon_id
+        return taxon_id, new_genus
 
     def check_taxa_against_database(self):
         """check_taxa_against_database:
@@ -764,15 +762,20 @@ class CsvCreatePicturae:
             else row['fulltaxon'], axis=1)
 
         # Query once per unique entry for efficiency
-        unique_fulltaxons = self.record_full[['fulltaxon', 'Hybrid', 'taxname']].drop_duplicates()
+        unique_fulltaxons = self.record_full[['fulltaxon', 'Hybrid', 'taxname', 'Genus']].drop_duplicates()
 
-        taxon_id_map = unique_fulltaxons.apply(lambda row: self.taxon_process_row(row), axis=1)
-        taxon_id_map.index = unique_fulltaxons['fulltaxon']
-        taxon_id_map = taxon_id_map.to_dict()
+        # Apply function and convert results into a DataFrame
+        taxon_map_df = unique_fulltaxons.apply(lambda row: self.taxon_process_row(row), axis=1, result_type='expand')
+        taxon_map_df.columns = ['taxon_id', 'new_genus']
 
-        # Mapping the results back to the original DataFrame
-        self.record_full['taxon_id'] = self.record_full['fulltaxon'].map(taxon_id_map)
+        taxon_map_df.index = unique_fulltaxons['fulltaxon']
 
+        # Map taxon_id and new genus
+        self.record_full['taxon_id'] = self.record_full['fulltaxon'].map(taxon_map_df['taxon_id'])
+
+        self.record_full['new_genus'] = self.record_full['fulltaxon'].map(taxon_map_df['new_genus'])
+
+        # Convert 'taxon_id' to integer type
         self.record_full['taxon_id'] = self.record_full['taxon_id'].astype(pd.Int64Dtype())
 
         self.record_full.drop(columns=["fulltaxon"], inplace=True)
