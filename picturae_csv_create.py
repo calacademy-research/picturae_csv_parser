@@ -278,8 +278,8 @@ class CsvCreatePicturae:
             filtered_spec_csv = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
             csv_batch_unmatch = filtered_spec_csv['CSV-BATCH'].unique()
 
-            raise ValueError(f"In the following batches {csv_batch_unmatch}, the"
-                             f" following barcodes not matched to a folder {spec_difference}")
+            raise ValueError(f"In the following batches {sorted(set(csv_batch_unmatch))}, the"
+                             f" following barcodes not matched to a folder {sorted(set(spec_difference))}")
 
 
     def remove_duplicate_barcodes(self):

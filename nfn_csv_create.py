@@ -7,17 +7,13 @@ import numpy as np
 import csv
 import re
 import logging
-from geopy.geocoders import Nominatim
-from geopy.exc import GeopyError
-import spacy
-
+import json5
+import json
+import requests
 from taxon_tools.BOT_TNRS import process_taxon_resolve
 class NfnCsvCreate():
     def __init__(self, csv_name, coll, config):
         self.csv_name = csv_name
-
-        self.nlp = spacy.load("en_core_web_sm")
-        self.geolocator = Nominatim(user_agent="geoapiExercises")
 
         self.row = None
         self.index = None
@@ -33,6 +29,9 @@ class NfnCsvCreate():
                        "CGS", "ITRF", "ITRS", "SAD"]
 
         self.sql_csv_tools = SqlCsvTools(config=config)
+
+        # self.ollama_url = "http://10.1.10.176:11434"
+        self.ollama_url = "http://10.1.10.183:11434"
 
         self.nominatum_dict = {}
 
@@ -111,10 +110,15 @@ class NfnCsvCreate():
         # Rename columns using the filtered dictionary
         self.master_csv = self.master_csv.rename(columns=filtered_col_dict)
 
-        col_order_list = list(filtered_col_dict.values())
+        # Start with the known columns
+        known_cols = list(filtered_col_dict.values())
 
-        self.master_csv = self.master_csv.reindex(columns=col_order_list, fill_value=None)
+        # Add the remaining columns at the end (preserve extras)
+        remaining_cols = [col for col in self.master_csv.columns if col not in known_cols]
 
+        final_col_order = known_cols + remaining_cols
+
+        self.master_csv = self.master_csv[final_col_order]
     def remove_records(self):
         """remove_records: removes potential problem records before cleaning.
           Includes double transcriptions, banned user names."""
@@ -316,86 +320,144 @@ class NfnCsvCreate():
             self.row[f'Datum_{i}'] = utm_datum
 
 
-    def reverse_trs_spec_descr(self):
-        """checks specimen description to check with TRS percent match and reverse filter rows that contain taxonomy,
-        keeping rows that contain no taxonomy."""
+    def clean_habitat_specimen_description_llm(self):
+        cleaned_habitats = []
+        cleaned_specimen_desc = []
 
-        taxon_frame = pd.DataFrame(self.master_csv[['classification', 'Text1']])
+        for index, row in self.master_csv.iterrows():
+            habitat = row['Remarks']
 
-        taxon_frame.rename(columns={'Text1': 'fullname', 'classification': 'CatalogNumber'}, inplace=True)
+            specimen_description = row['Text1']
+
+            if pd.isna(habitat) and pd.isna(specimen_description):
+                cleaned_habitats.append("")
+                cleaned_specimen_desc.append("")
+                continue
+
+            text = json.dumps({
+                "habitat": habitat if isinstance(habitat, str) else "",
+                "specimen_description": specimen_description if isinstance(specimen_description, str) else ""
+            })
+
+            structured_data = self.send_to_llm(text)
+
+            print(structured_data)
+
+            # If response failed or isn't dict-like, return original
+            if not isinstance(structured_data, dict):
+                print(structured_data)
+                cleaned_habitats.append("No dictionary returned")
+                cleaned_specimen_desc.append("No dictionary returned")
+            else:
+                cleaned_habitats.append(structured_data.get("habitat", ""))
+                cleaned_specimen_desc.append(structured_data.get("specimen_description", ""))
+
+        self.master_csv['cleaned_remarks'] = cleaned_habitats
+        self.master_csv['cleaned_spec_desc'] = cleaned_specimen_desc
+
+    def send_to_llm(self, user_input):
+        url = f"{self.ollama_url}/api/chat"
+        system_prompt = (
+            "You are a label-cleaning AI that strictly extracts *verbatim* text for fields: `habitat`, `specimen_description` and 'locality'. "
+            "You will be given a JSON object with two or three input fields: `habitat` and `specimen_description`, and sometimes 'locality' but not always locality "
+            "Each field may include mixed information. Your job is to remove all content that does not belong in each field according to the rules below.\n\n"
+
+            "📌 DO NOT add or infer any new information. ONLY retain verbatim content. If a phrase is required for sentence completeness, you may retain it even if it's borderline.\n\n"
 
 
-        resolved_taxon = process_taxon_resolve(taxon_frame)
+            "🔒 Follow these strict rules:\n\n"
 
-        resolved_taxon.fillna({'overall_score': 0}, inplace=True)
+            "▶️ VERBATIM ONLY:\n"
+            "- Do not rephrase, summarize, or infer meaning.\n"
+            "- Do not turn phrases into lists or categories.\n"
+            "- Use exact phrases from the label text only.\n\n"
 
-        resolved_taxon.rename(columns={"CatalogNumber": "classification"}, inplace=True)
+            "▶️ FIELD DEFINITIONS & RULES:\n"
 
-        if len(resolved_taxon) > 0:
-             self.master_csv = pd.merge(self.master_csv, resolved_taxon, on=["classification"], how="left")
+            "**Habitat**:\n"
+            "- Describes the physical environment where the specimen grows.\n"
+            "- Include: substrate (e.g. 'dry sand', 'loamy soil'), associated species, vegetation type (e.g. 'open grassland'), floodplains, power lines, and life zones.\n"
+            "- General terms like 'along road', 'on canyon slopes', or 'trail edge' go here.\n"
+            "- named Burns or fires, like 'Bean Camp burn' or 'area of Carr Fire' go here \n"
+            "- ❌ Do NOT include place names, geographic features, road names, or phrases like 'near [named place]'. These belong to locality.\n"
+            "- ❌ Do NOT include details about the plant itself like height, color, or flowers.\n\n"
 
-        barcode_counts = self.master_csv["Barcode"].value_counts()
-        is_unique_barcode = self.master_csv["Barcode"].map(barcode_counts) == 1
+            "**Specimen Description**:\n"
+            "- Describes the physical features of the plant only not taxonomy or scientific name or author.\n"
+            "- Include: size, color, shape, condition, maturity, flowers, inflorescence, abundance (e.g. 'common', 'many in bloom'), and 'n=14'.\n"
+            "- ❌ Do NOT include habitats or locality descriptions (e.g. 'grassland', 'near Glen Alpine').\n"
+            "- ❌ Do NOT include place names.\n\n"
+            "- ❌ Do NOT include Scientific Name or Author e.g Eriastrum sapphirinum (Eastw.) or collomia linearis etc ... "
+            
+            "**Locality**:\n"
+            "- Includes specific named places: cities, roads, parks, regions, mountain ranges, distances or bearings (e.g. '3 miles west of Jacumba').\n"
+            "- ❌ Do NOT include general environments like 'grassland', 'floodplain', or 'roadside'.\n"
+            "- ❌ Do NOT include plant traits or descriptions.\n\n"
 
-        # self.master_csv['overall_score'] = pd.to_numeric(self.master_csv['overall_score'], errors='coerce')
+            "▶️ FORMATTING:\n"
+            "- Return a **valid JSON object**, like: {\"habitat\": \"...\", \"specimen_description\": \"...\", \"locality\": \"...\"}\n"
+            "- If a field is missing, return an empty string: \"field\": \"\"\n"
+            "- Do not wrap in markdown or include extra explanation.\n"
 
-        rows_to_drop = self.master_csv.apply(
-            lambda row: (
-                ((self.has_matching_substring(row, "fullname", "name_matched") and
-                pd.notna(row["name_matched"])) or (row['overall_score'] > 0.73) and
-                not is_unique_barcode.loc[row.name]  # Check if Barcode is not unique
-            )),
-            axis=1)
-
-        # # Filter out rows to drop
-        self.master_csv = self.master_csv[~rows_to_drop]
-
-
-
-    def reverse_check_habitat(self):
-        self.master_csv['placename_present'] = self.master_csv['Remarks'].apply(self.extract_places_and_verify)
-
-    def extract_places_and_verify(self, sentence):
-        """
-        Extracts named places from a sentence and verifies their validity using Nominatim.
-
-        Args:
-            sentence (str): The input sentence to analyze.
-
-        Returns:
-            bool: True if at least one valid place is found; False otherwise.
-        """
-        # Initialize Nominatim to use the Dockerized instance
-        self.geolocator = Nominatim(
-            user_agent="your_app_name",
-            timeout=10,
-            scheme="http",
-            domain="localhost:8080"
+            "▶️ EXAMPLES:\n"
+            "- Input: 'Dry sandy soil under sagebrush. Near McGee Creek. Small annual herb with yellow flowers.'\n"
+            "- Output: {\"habitat\": \"Dry sandy soil under sagebrush.\", \"specimen_description\": \"Small annual herb with yellow flowers.\", \"locality\": \"Near McGee Creek.\"}\n"
+            "- Input: 'Along roadside near Mono Co. border. Red flowers. Open grassland with scattered shrubs.'\n"
+            "- Output: {\"habitat\": \"Along roadside. Open grassland with scattered shrubs.\", \"specimen_description\": \"Red flowers.\", \"locality\": \"Near Mono Co. border.\"}\n"
         )
 
-        # Extract named entities from the text
-        sentence = str(sentence).lower()
-        doc = self.nlp(sentence)
-        potential_places = [ent.text for ent in doc.ents if ent.label_ in ("GPE", "LOC")]
+        try:
+            print(f"Sending request to: {url}")
+            response = requests.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                data=json.dumps({
+                    "model": "llama3:70b",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_input}
+                    ],
+                    "stream": False
+                })
+            )
 
-        # Check each entity if it's a real place
-        if potential_places:
-            for place in potential_places:
-                # check if parsed name scientific by checking taxon tree
-                sql = f'''SELECT TaxonID from taxon WHERE FullName like "%{place}%"'''
-                is_taxon = self.sql_csv_tools.get_record(sql=sql)
-                if "zone" not in place.lower() and pd.isna(is_taxon) is True:
-                    try:
-                        location = self.geolocator.geocode(place)
-                        if location:
-                            return True  # If any place is valid, return True
-                    except GeopyError as e:
-                        print(f"Geopy error for '{place}': {e}")
-                    except Exception as e:
-                        print(f"Unexpected error: {e}")
-            return False
-        else:
-            return False
+            if response.status_code != 200:
+                print("Bad response:", response.status_code, response.text)
+                return "Error"
+
+            response_json = response.json()
+            raw_text = response_json.get("message", {}).get("content", "")
+
+            parsed = self.clean_and_parse_json5(raw_text=raw_text)
+
+            return parsed
+        except Exception as e:
+            print(f"error in querying Mistral: {e}")
+
+    def clean_and_parse_json5(self, raw_text):
+        try:
+            # Remove markdown formatting (e.g., ```json)
+            cleaned = raw_text.strip().lstrip("`").rstrip("`")
+
+            # Find the first open brace
+            start = cleaned.find("{")
+            if start == -1:
+                raise ValueError("No opening brace found")
+
+            # Manually extract everything from the first brace
+            json_candidate = cleaned[start:]
+
+            # If there's no closing brace, add one
+            if not json_candidate.strip().endswith("}"):
+                json_candidate += "}"
+
+            # Try parsing
+            return json5.loads(json_candidate)
+
+        except Exception as e:
+            print("Could not clean/parse JSON5:", raw_text)
+            print("Error detail:", e)
+            return "Error"
 
     def clean_lat_long(self):
         pass
@@ -426,26 +488,22 @@ class NfnCsvCreate():
             self.clean_elevation()
             self.regex_check_TRS()
             self.regex_check_UTM()
-            # self.clean_lat_long()
+            self.clean_lat_long()
             self.master_csv.loc[self.row.name] = self.row
 
-        self.reverse_trs_spec_descr()
-        self.reverse_check_habitat()
-        print(self.nominatum_dict)
+        self.clean_habitat_specimen_description_llm()
         self.master_csv.to_csv(f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}"
                                f"final_nfn_{remove_non_numerics(self.csv_name)}.csv",
                                sep=',',  # Change to '\t' for tab, '|' for pipe, etc. if needed
                                quoting=csv.QUOTE_ALL,  # Quote all entries
                                index=False  # Set to True if you want to include the DataFrame index
                                )
-        # self.clean_elevation()
-        # self.clean_herb_accession()
 
 
 #test
 
-pic_config = get_config("Botany_PIC")
-
-nfn_csv = NfnCsvCreate(csv_name="26925_From_Phlox_Gilia_unreconciled.csv", coll="Botany_PIC", config=pic_config)
-
-nfn_csv.run_all_methods()
+# pic_config = get_config("Botany_PIC")
+#
+# nfn_csv = NfnCsvCreate(csv_name="26925_From_Phlox_Gilia_unreconciled.csv", coll="Botany_PIC", config=pic_config)
+#
+# nfn_csv.run_all_methods()
