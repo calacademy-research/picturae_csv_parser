@@ -453,8 +453,8 @@ class CsvCreatePicturae:
 
         invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
 
-        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv,
-                invalid_verbatim_csv)
+        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv, \
+               invalid_verbatim_csv)
 
     def flag_missing_data(self):
 
