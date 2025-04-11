@@ -481,11 +481,11 @@ class CsvCreatePicturae:
             if len(csv_data) > 0:
                 csv_data = csv_data.sort_values(by=['CSV_batch', 'CatalogNumber'])
                 if key in ["missing_rank", "missing_family"]:
-                    item_set = set(csv_data['folder_barcode'])
-                    batch_set = set(csv_data['CSV_batch'])
+                    item_set = sorted(set(csv_data['folder_barcode']))
+                    batch_set = sorted(set(csv_data['CSV_batch']))
                 else:
-                    item_set = set(csv_data['CatalogNumber'])
-                    batch_set = set(csv_data['CSV_batch'])
+                    item_set = sorted(set(csv_data['CatalogNumber']))
+                    batch_set = sorted(set(csv_data['CSV_batch']))
 
                 message += message_dict[key]
                 message += f" {item_set} in batches {batch_set}\n\n"
