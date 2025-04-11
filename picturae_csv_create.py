@@ -395,14 +395,12 @@ class CsvCreatePicturae:
         #
         # self.logger.info("merged csv written")
 
-
     def missing_data_masks(self):
         """missing_data_masks: create masks and filtered csvs for each kind of relevant missing data to flag.
             returns:
                 four filtered csvs --> missing_rank_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
         """
         # flags in missing rank columns when > 1 infra-specific rank.
-
         rank1_missing = (self.record_full['Rank 1'].isna() | (self.record_full['Rank 1'] == '')) & \
                         (self.record_full['Epithet 1'].notna() & (self.record_full['Epithet 1'] != ''))
 
@@ -412,21 +410,18 @@ class CsvCreatePicturae:
         missing_rank_csv = self.record_full.loc[rank1_missing & rank2_missing]
 
         # flags missing family in column
-
         missing_family = (self.record_full['Family'].isna() | (self.record_full['Family'] == '') |
                           (self.record_full['Family'].isnull()))
 
         missing_family_csv = self.record_full.loc[missing_family]
 
         # flags if missing higher geography
-
         missing_geography = (self.record_full['Country'].isna() | (self.record_full['Country'] == '') |
                              (self.record_full['Country'].isnull()))
 
         missing_geography_csv = self.record_full.loc[missing_geography]
 
         # flags if label is covered or folded.
-
         missing_label = ["covered" in str(row).lower() or "folded" in str(row).lower()
                          for row in self.record_full['sheet_notes']]
 
@@ -437,51 +432,57 @@ class CsvCreatePicturae:
         invalid_end_date = ~self.record_full['end_date'].apply(validate_date)
 
         invalid_date_mask = invalid_start_date | invalid_end_date
-
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
-        return missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
+        # flags verbatim date too long greater than 50 char and stores them in new label_data column
+
+        invalid_verbatim_mask = self.record_full["verbatim_date"].str.len() > 50
+
+        # adding lable data and new genus boolean
+        self.record_full['label_data'] = ""
+        self.record_full['new_genus'] = False
+
+        self.record_full.loc[invalid_verbatim_mask, 'label_data'] = self.record_full.loc[
+            invalid_verbatim_mask, 'verbatim_date']
+
+        invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
+
+        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv,
+                invalid_verbatim_csv)
 
     def flag_missing_data(self):
 
         missing_rank_csv, missing_family_csv, missing_geography_csv, \
-            missing_label_csv, invalid_date_csv = self.missing_data_masks()
+            missing_label_csv, invalid_date_csv, invalid_verbatim_csv = self.missing_data_masks()
 
+        data_flag_dict = {"missing_rank": missing_rank_csv, "missing_family": missing_family_csv,
+                          "missing_geography": missing_geography_csv, "missing_label": missing_label_csv,
+                          "invalid_date": invalid_date_csv, "invalid_verbatim": invalid_verbatim_csv}
+
+        message_dict = {
+            "missing_rank": "Taxonomic names with 2 missing ranks at covers:",
+            "missing_family": "Rows missing taxonomic family at barcodes:",
+            "missing_geography": "Rows missing higher geography at barcodes:",
+            "missing_label": "Label covered or folded at barcodes:",
+            "invalid_date": "Invalid dates at:",
+            "invalid_verbatim": "Verbatim date too long at:",
+        }
+        # flag missing and incorrect data
         message = ""
-        if len(missing_rank_csv) > 0:
-            missing_rank_set = sorted(set(missing_rank_csv['folder_barcode']))
-            batch_set = sorted(set(missing_rank_csv['CSV_batch']))
-            message += f"Taxonomic names with 2 missing ranks at covers: {missing_rank_set} in batches {batch_set}\n\n"
-        else:
-            self.logger.info('No missing ranks: No corrections needed')
+        for key, csv_data in data_flag_dict.items():
+            if key == "missing_label" and self.covered_ignore:
+                continue
+            if len(csv_data) > 0:
+                csv_data = csv_data.sort_values(by=['CSV_batch', 'CatalogNumber'])
+                if key in ["missing_rank", "missing_family"]:
+                    item_set = sorted(set(csv_data['folder_barcode']))
+                    batch_set = sorted(set(csv_data['CSV_batch']))
+                else:
+                    item_set = sorted(set(csv_data['CatalogNumber']))
+                    batch_set = sorted(set(csv_data['CSV_batch']))
 
-        if len(missing_family_csv) > 0:
-            missing_family_set = sorted(set(missing_family_csv['CatalogNumber']))
-            batch_set = sorted(set(missing_family_csv['CSV_batch']))
-            message += f"Rows missing taxonomic family at barcodes {missing_family_set} in batches {batch_set}\n\n"
-        else:
-            self.logger.info('No missing taxonomic families: No corrections needed')
-
-        if len(missing_geography_csv) > 0:
-            missing_geography_set = sorted(set(missing_geography_csv['CatalogNumber']))
-            batch_set = sorted(set(missing_geography_csv['CSV_batch']))
-            message += f"Rows missing higher geography at barcodes {missing_geography_set} in batches {batch_set}\n\n"
-        else:
-            self.logger.info('No missing higher geography: No corrections needed')
-
-        if len(missing_label_csv) > 0 and self.covered_ignore is False:
-            missing_label_set = sorted(set(missing_label_csv['CatalogNumber']))
-            batch_set = sorted(set(missing_label_csv['CSV_batch']))
-            message += f"Label covered or folded at barcodes {missing_label_set} in batches {batch_set}\n\n"
-        else:
-            self.logger.info('No covered or missing labels: No corrections needed')
-
-        if len(invalid_date_csv) > 0:
-            print(invalid_date_csv['start_date'])
-            missing_date_set = sorted(set(invalid_date_csv['CatalogNumber']))
-            batch_set = sorted(set(invalid_date_csv['CSV_batch']))
-            message += f"Invalid dates at {missing_date_set} in batches {batch_set}\n\n"
-
+                message += message_dict[key]
+                message += f" {item_set} in batches {batch_set}\n\n"
         if message:
             raise ValueError(message.strip())
 
@@ -715,7 +716,18 @@ class CsvCreatePicturae:
                         hybrid=str_to_bool(row['Hybrid']),
                         taxname=row['taxname']
         )
-        return taxon_id
+        # Check for new genus to verify family assignment
+        new_genus = False
+        if taxon_id is None:
+            genus_id = self.sql_csv_tools.taxon_get(
+                name=row['Genus'],
+                hybrid=str_to_bool(row['Hybrid']),
+                taxname=row['taxname']
+            )
+            if genus_id is None:
+                new_genus = True
+
+        return taxon_id, new_genus
 
     def check_taxa_against_database(self):
         """check_taxa_against_database:
@@ -743,15 +755,20 @@ class CsvCreatePicturae:
             else row['fulltaxon'], axis=1)
 
         # Query once per unique entry for efficiency
-        unique_fulltaxons = self.record_full[['fulltaxon', 'Hybrid', 'taxname']].drop_duplicates()
+        unique_fulltaxons = self.record_full[['fulltaxon', 'Hybrid', 'taxname', 'Genus']].drop_duplicates()
 
-        taxon_id_map = unique_fulltaxons.apply(lambda row: self.taxon_process_row(row), axis=1)
-        taxon_id_map.index = unique_fulltaxons['fulltaxon']
-        taxon_id_map = taxon_id_map.to_dict()
+        # Apply function and convert results into a DataFrame
+        taxon_map_df = unique_fulltaxons.apply(lambda row: self.taxon_process_row(row), axis=1, result_type='expand')
+        taxon_map_df.columns = ['taxon_id', 'new_genus']
 
-        # Mapping the results back to the original DataFrame
-        self.record_full['taxon_id'] = self.record_full['fulltaxon'].map(taxon_id_map)
+        taxon_map_df.index = unique_fulltaxons['fulltaxon']
 
+        # Map taxon_id and new genus
+        self.record_full['taxon_id'] = self.record_full['fulltaxon'].map(taxon_map_df['taxon_id'])
+
+        self.record_full['new_genus'] = self.record_full['fulltaxon'].map(taxon_map_df['new_genus'])
+
+        # Convert 'taxon_id' to integer type
         self.record_full['taxon_id'] = self.record_full['taxon_id'].astype(pd.Int64Dtype())
 
         self.record_full.drop(columns=["fulltaxon"], inplace=True)
@@ -862,16 +879,61 @@ class CsvCreatePicturae:
             raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
                                       f'the following batches: {taxon_correct_table}')
 
+    def read_and_merge_image_manifest(self):
+        """to keep taxonomic family consistent with herbarium cabinet order,
+            merges the family number from the picturae imaging manifests.
+            Herbarium cabinet family number supersedes 'correct' family assignment.
+        """
+        batch_list = list(set(self.record_full['CSV_batch']))
+        headers = ["type", "folder_barcode", "CatalogNumber", "Family", "Barcode", "Timestamp", "Path"]
+        full_manifest = pd.DataFrame(columns=headers)
+        # reads and concatenates each imaging manifest from the path
+        for batch in batch_list:
+            path_to_csv = f"{self.path_prefix}{batch}{path.sep}{batch}.csv"
+            batch_manifest = pd.read_csv(path_to_csv, names=headers)
+            full_manifest = pd.concat([full_manifest, batch_manifest], ignore_index=True)
+
+        full_manifest = full_manifest.loc[full_manifest['type'].str.lower() == 'folder'.lower()]
+        # keeping only family and cover barcode to merge
+        full_manifest.drop(columns=["type", "CatalogNumber", "Barcode", "Timestamp", "Path"], inplace=True)
+
+        self.record_full = pd.merge(self.record_full, full_manifest, on="folder_barcode", how="left")
+
+        # adding boolean column for rows where manifest family number differs from accepted family and neither are NA
+        self.record_full['family_diff'] = np.where(
+                                          self.record_full['Family_x'].notna() & self.record_full['Family_y'].notna() &
+                                          self.record_full['Family_x'].str.strip().ne("") & self.record_full['Family_y'].str.strip().ne("") &
+                                          (self.record_full['Family_x'] != self.record_full['Family_y']),
+                                          True, False)
+
+        self.record_full['Family_x'] = np.where(
+            self.record_full['Family_y'].notna() & self.record_full['Family_y'].str.strip().ne(""),
+            self.record_full['Family_y'],
+            self.record_full['Family_x']
+        )
+
+        self.record_full.drop(columns="Family_y", inplace=True)
+
+        self.record_full.rename(columns={"Family_x": "Family"}, inplace=True)
+
+
+
 
     def write_upload_csv(self):
         """write_upload_csv: writes a copy of csv to PIC upload
             allows for manual review before uploading.
         """
+
+        self.read_and_merge_image_manifest()
+
         self.record_full.drop(columns=['mostly_handwritten', 'folder_barcode', 'start_date_month',
                                        'start_date_day', 'start_date_year', 'end_date_month',
                                        'end_date_day', 'end_date_year'], inplace=True)
 
         file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{self.date_range}.csv"
+
+        #adding in blank label data field distinct from notes section
+
 
         # quoting non-numerics/non-bools to prevent punctuation from splitting columns
 
