@@ -55,7 +55,7 @@ class TestDataFlagging(unittest.TestCase, TestingTools):
         # Test invalid dates
         self.assertEqual(len(invalid_date_csv), 3)  # Expect 3 rows with invalid dates
 
-        # test verbatim date lenght
+        # test verbatim date length
         self.assertEqual(len(verbatim_date_csv), 1)  # Expect 1 row with invalid verbatim date
 
 
