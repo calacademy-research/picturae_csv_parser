@@ -11,6 +11,13 @@ import json5
 import json
 import requests
 from taxon_tools.BOT_TNRS import process_taxon_resolve
+
+# Configure logging for the module. You can adjust level and formatting as needed.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+)
+
 class NfnCsvCreate():
     def __init__(self, csv_name, coll, config):
         self.csv_name = csv_name
@@ -18,7 +25,7 @@ class NfnCsvCreate():
         self.row = None
         self.index = None
 
-        self.logger = logging.getLogger(f'Client.' + self.__class__.__name__)
+        self.logger = logging.getLogger(f'Client.{self.__class__.__name__}')
 
         self.master_csv = pd.read_csv(f"nfn_csv{os.path.sep}{csv_name}", dtype=str, low_memory=False)
 
@@ -35,16 +42,13 @@ class NfnCsvCreate():
 
         self.nominatum_dict = {}
 
-
     def detect_unknown_values(self, string):
         if string.lower() in ['none', 'unknown', 'unkown', '', 'nan'] or pd.isna(string):
             return True
         else:
             return False
 
-
     def rename_columns(self):
-
         col_dict = {
             'Barcode': 'Barcode',
             'Country': 'Country',
@@ -58,10 +62,10 @@ class NfnCsvCreate():
             'CollectorNumber': 'CollectorNumber',
             'classification_id': 'classification',
             'user_name': 'user_name',
-            'T18_Herbarium Code_1': 'modifier', # herbarium code
-            'T17_Accession Number _1': 'AltCatalogNumber', # accession number
-            'T20_Habitat_1': 'Remarks', # Habitat
-            'T21_Plant Description_1': 'Text1', # specimen description
+            'T18_Herbarium Code_1': 'modifier',  # herbarium code
+            'T17_Accession Number _1': 'AltCatalogNumber',  # accession number
+            'T20_Habitat_1': 'Remarks',  # Habitat
+            'T21_Plant Description_1': 'Text1',  # specimen description
             'T23_Elevation - Minimum_1': 'MinElevation',
             'T24_Elevation - Maximum_1': 'MaxElevation',
             'T25_Elevation Units_1': 'OriginalElevationUnit',
@@ -119,15 +123,16 @@ class NfnCsvCreate():
         final_col_order = known_cols + remaining_cols
 
         self.master_csv = self.master_csv[final_col_order]
+
     def remove_records(self):
         """remove_records: removes potential problem records before cleaning.
           Includes double transcriptions, banned user names."""
-        #removing blacklist records
+        # Removing blacklist records
         blacklist = self.config.nfn_blacklist
         barcode_set = set(self.master_csv['Barcode'].unique())
 
         self.master_csv = self.master_csv[~self.master_csv['user_name'].isin(blacklist)].reset_index(drop=True)
-        # removing multimount double transcription records
+        # Removing multimount double transcription records
         self.master_csv['AltCatalogNumber'] = self.master_csv['AltCatalogNumber'].apply(self.clean_herb_accession)
 
         self.master_csv = self.master_csv[self.master_csv['AltCatalogNumber'] != '']
@@ -137,24 +142,22 @@ class NfnCsvCreate():
         removed_set = barcode_set - new_barcode_set
         if len(removed_set) > 0:
             self.logger.warning(f"Some barcodes including [{removed_set}] dropped all records due to issues")
-        # re-indexing dataframe
-
+        # Re-indexing dataframe
 
     def clean_elevation(self):
         """clean_elevation: cleans elevation such that it contains only numeric data ordered from min to max.
-                            additionally adds in unit and removes unknowns.
-                            Also checks against accidental transcriptions of collector number as altitutde
+                            Additionally adds in unit and removes unknowns.
+                            Also checks against accidental transcriptions of collector number as altitude.
         """
-        #removing non numeric punctuation
+        # Removing non-numeric punctuation
         min_elevation = remove_non_numerics(str(self.row['MinElevation'])).strip()
         max_elevation = remove_non_numerics(str(self.row['MaxElevation'])).strip()
         elevation_unit = str(self.row['OriginalElevationUnit']).strip()
 
-        # collector number to check accidental elevation transcription
+        # Collector number to check accidental elevation transcription
         collector_number = remove_non_numerics(str(self.row['CollectorNumber'])).strip()
 
-        # moving incorrectly placed min elevation and emptying out
-
+        # Moving incorrectly placed min elevation and emptying out
         if (pd.isna(min_elevation) or min_elevation.strip("0") == "") and pd.notna(max_elevation):
             min_elevation = max_elevation
             max_elevation = ''
@@ -175,7 +178,7 @@ class NfnCsvCreate():
             min_elevation = ''
             elevation_unit = ''
         elif str(min_elevation).endswith("0") and is_unknown:
-            # currently matched to highest possible altitude in north america in meters (might think of finding altitude resolver)
+            # Currently matched to highest possible altitude in North America in meters
             if int(min_elevation) > 6190:
                 elevation_unit = 'ft'
             else:
@@ -186,7 +189,7 @@ class NfnCsvCreate():
         elif elevation_unit and elevation_unit.lower() == "meters":
             elevation_unit = "m"
 
-        # checking against collector number to prevent mistaken transcriptions.
+        # Checking against collector number to prevent mistaken transcriptions.
         if str(min_elevation) == collector_number or str(max_elevation) == collector_number:
             min_elevation = ''
             max_elevation = ''
@@ -196,10 +199,8 @@ class NfnCsvCreate():
         self.row['MaxElevation'] = str(max_elevation) if elevation_unit is not None else np.nan
         self.row['OriginalElevationUnit'] = str(elevation_unit) if elevation_unit is not None else np.nan
 
-
-
     def clean_herb_accession(self, acc_num):
-        """removes accessions numbers for mistakenly transcribed multi-mounts,
+        """Removes accession numbers for mistakenly transcribed multi-mounts,
             and standardizes empty entries into [No Accession].
         """
         acc_num = str(acc_num).strip()
@@ -209,10 +210,9 @@ class NfnCsvCreate():
             acc_num = ""
         return acc_num
 
-
     def regex_check_coord(self, coord: str, regex_pattern, max_num: int):
         if coord and not self.detect_unknown_values(coord):
-            # if regex pattern is anywhere within the coord
+            # If regex pattern is found anywhere within the coord
             match = regex_pattern.search(coord)
             if match:
                 township_number = int(match.group(1))
@@ -224,13 +224,11 @@ class NfnCsvCreate():
                 coord = ''
         else:
             coord = ''
-
         return coord
 
-
-    # remember to improve this to capture last edge casesw
+    # Remember to improve this to capture last edge cases.
     def regex_check_TRS(self):
-        """compares each TRS entry egainst regex """
+        """Compares each TRS entry against regex."""
         township_regex = re.compile(r'^T?\s*(0?[1-9]|[1-9][0-9])(N|S)$', re.IGNORECASE)
         range_regex = re.compile(r'^R?\s*(0?[1-9]|[1-9][0-9])(E|W)$', re.IGNORECASE)
         section_regex = re.compile(r'^S?\s*(0?[1-9]|[1-2][0-9]|3[0-6])$', re.IGNORECASE)
@@ -244,16 +242,14 @@ class NfnCsvCreate():
                 trs_range = str(self.row.get(f"Range_{i}", "")).strip()
                 trs_section = str(self.row.get(f"Section_{i}", "")).strip()
                 trs_map_quadrangle = str(self.row.get(f"Quadrangle_{i}", "")).strip()
-            except:
+            except Exception as e:
+                self.logger.error(f"Error accessing TRS fields: {e}")
                 break
 
             if any(not pd.isna(x) and x is not None and not self.detect_unknown_values(str(x))
                    for x in [trs_township, trs_range, trs_section, trs_map_quadrangle]):
-
                 trs_township = self.regex_check_coord(coord=trs_township, regex_pattern=township_regex, max_num=99)
-
                 trs_range = self.regex_check_coord(coord=trs_range, regex_pattern=range_regex, max_num=99)
-
                 trs_section = self.regex_check_coord(coord=trs_section, regex_pattern=section_regex, max_num=36)
 
                 if not all(val in ["", "."] for val in [trs_township, trs_range, trs_section]):
@@ -274,10 +270,9 @@ class NfnCsvCreate():
             self.row[f'Section{i}'] = trs_section
             self.row[f'Quadrangle_{i}'] = trs_map_quadrangle
 
-
     def regex_check_UTM(self):
-        """compares each UTM entry against regex and maximum numeric range.
-           Checks utm datum against list of acceptible datum codes.
+        """Compares each UTM entry against regex and maximum numeric range.
+           Checks utm datum against list of acceptable datum codes.
         """
         zone_regex = re.compile(r'^\s*(0?[1-9]|[1-5][0-9]|60)\s*$')
         easting_regex = re.compile(r'^\s*([1-8][0-9]{5}|900000)$', re.IGNORECASE)
@@ -292,16 +287,14 @@ class NfnCsvCreate():
                 easting = remove_non_numerics(str(self.row.get(f"Utm_easting_{i}", "")).strip())
                 northing = remove_non_numerics(str(self.row.get(f"Utm_northing_{i}", "")).strip())
                 utm_datum = remove_non_numerics(str(self.row.get(f"Datum_{i}", "")).strip().upper())
-            except:
+            except Exception as e:
+                self.logger.error(f"Error accessing UTM fields: {e}")
                 break
 
             if any(not pd.isna(x) and x is not None and not self.detect_unknown_values(str(x))
                    for x in [zone, easting, northing]):
-
                 zone = self.regex_check_coord(coord=zone, regex_pattern=zone_regex, max_num=60)
-
                 easting = self.regex_check_coord(coord=easting, regex_pattern=easting_regex, max_num=900000)
-
                 northing = self.regex_check_coord(coord=northing, regex_pattern=northing_regex, max_num=10000000)
                 if not all(val in ["", "."] for val in [zone, easting, northing]):
                     if any(datum in utm_datum for datum in self.datums):
@@ -319,14 +312,12 @@ class NfnCsvCreate():
             self.row[f'Utm_section_{i}'] = northing
             self.row[f'Datum_{i}'] = utm_datum
 
-
     def clean_habitat_specimen_description_llm(self):
         cleaned_habitats = []
         cleaned_specimen_desc = []
 
         for index, row in self.master_csv.iterrows():
             habitat = row['Remarks']
-
             specimen_description = row['Text1']
 
             if pd.isna(habitat) and pd.isna(specimen_description):
@@ -340,12 +331,11 @@ class NfnCsvCreate():
             })
 
             structured_data = self.send_to_llm(text)
-
-            print(structured_data)
+            self.logger.info(f"LLM returned: {structured_data}")
 
             # If response failed or isn't dict-like, return original
             if not isinstance(structured_data, dict):
-                print(structured_data)
+                self.logger.warning(f"LLM did not return a valid dictionary: {structured_data}")
                 cleaned_habitats.append("No dictionary returned")
                 cleaned_specimen_desc.append("No dictionary returned")
             else:
@@ -359,55 +349,44 @@ class NfnCsvCreate():
         url = f"{self.ollama_url}/api/chat"
         system_prompt = (
             "You are a label-cleaning AI that strictly extracts *verbatim* text for fields: `habitat`, `specimen_description` and 'locality'. "
-            "You will be given a JSON object with two or three input fields: `habitat` and `specimen_description`, and sometimes 'locality' but not always locality "
+            "You will be given a JSON object with two or three input fields: `habitat` and `specimen_description`, and sometimes 'locality' but not always locality. "
             "Each field may include mixed information. Your job is to remove all content that does not belong in each field according to the rules below.\n\n"
-
             "📌 DO NOT add or infer any new information. ONLY retain verbatim content. If a phrase is required for sentence completeness, you may retain it even if it's borderline.\n\n"
-
-
             "🔒 Follow these strict rules:\n\n"
-
             "▶️ VERBATIM ONLY:\n"
             "- Do not rephrase, summarize, or infer meaning.\n"
             "- Do not turn phrases into lists or categories.\n"
             "- Use exact phrases from the label text only.\n\n"
-
             "▶️ FIELD DEFINITIONS & RULES:\n"
-
             "**Habitat**:\n"
             "- Describes the physical environment where the specimen grows.\n"
             "- Include: substrate (e.g. 'dry sand', 'loamy soil'), associated species, vegetation type (e.g. 'open grassland'), floodplains, power lines, and life zones.\n"
             "- General terms like 'along road', 'on canyon slopes', or 'trail edge' go here.\n"
-            "- named Burns or fires, like 'Bean Camp burn' or 'area of Carr Fire' go here \n"
+            "- named Burns or fires, like 'Bean Camp burn' or 'area of Carr Fire' go here.\n"
             "- ❌ Do NOT include place names, geographic features, road names, or phrases like 'near [named place]'. These belong to locality.\n"
             "- ❌ Do NOT include details about the plant itself like height, color, or flowers.\n\n"
-
             "**Specimen Description**:\n"
-            "- Describes the physical features of the plant only not taxonomy or scientific name or author.\n"
+            "- Describes the physical features of the plant only, not taxonomy or scientific name or author.\n"
             "- Include: size, color, shape, condition, maturity, flowers, inflorescence, abundance (e.g. 'common', 'many in bloom'), and 'n=14'.\n"
             "- ❌ Do NOT include habitats or locality descriptions (e.g. 'grassland', 'near Glen Alpine').\n"
             "- ❌ Do NOT include place names.\n\n"
-            "- ❌ Do NOT include Scientific Name or Author e.g Eriastrum sapphirinum (Eastw.) or collomia linearis etc ... "
-            
+            "- ❌ Do NOT include Scientific Name or Author e.g. Eriastrum sapphirinum (Eastw.) or collomia linearis etc ...\n"
             "**Locality**:\n"
             "- Includes specific named places: cities, roads, parks, regions, mountain ranges, distances or bearings (e.g. '3 miles west of Jacumba').\n"
             "- ❌ Do NOT include general environments like 'grassland', 'floodplain', or 'roadside'.\n"
             "- ❌ Do NOT include plant traits or descriptions.\n\n"
-
             "▶️ FORMATTING:\n"
             "- Return a **valid JSON object**, like: {\"habitat\": \"...\", \"specimen_description\": \"...\", \"locality\": \"...\"}\n"
             "- If a field is missing, return an empty string: \"field\": \"\"\n"
-            "- Do not wrap in markdown or include extra explanation.\n"
-
+            "- Do not wrap in markdown or include extra explanation.\n\n"
             "▶️ EXAMPLES:\n"
             "- Input: 'Dry sandy soil under sagebrush. Near McGee Creek. Small annual herb with yellow flowers.'\n"
             "- Output: {\"habitat\": \"Dry sandy soil under sagebrush.\", \"specimen_description\": \"Small annual herb with yellow flowers.\", \"locality\": \"Near McGee Creek.\"}\n"
             "- Input: 'Along roadside near Mono Co. border. Red flowers. Open grassland with scattered shrubs.'\n"
             "- Output: {\"habitat\": \"Along roadside. Open grassland with scattered shrubs.\", \"specimen_description\": \"Red flowers.\", \"locality\": \"Near Mono Co. border.\"}\n"
         )
-
         try:
-            print(f"Sending request to: {url}")
+            self.logger.info(f"Sending request to: {url}")
             response = requests.post(
                 url,
                 headers={"Content-Type": "application/json"},
@@ -422,41 +401,36 @@ class NfnCsvCreate():
             )
 
             if response.status_code != 200:
-                print("Bad response:", response.status_code, response.text)
+                self.logger.error(f"Bad response: {response.status_code} - {response.text}")
                 return "Error"
 
             response_json = response.json()
             raw_text = response_json.get("message", {}).get("content", "")
 
             parsed = self.clean_and_parse_json5(raw_text=raw_text)
-
             return parsed
         except Exception as e:
-            print(f"error in querying Mistral: {e}")
+            self.logger.error(f"Error in querying Mistral: {e}")
+            return "Error"
 
     def clean_and_parse_json5(self, raw_text):
         try:
             # Remove markdown formatting (e.g., ```json)
             cleaned = raw_text.strip().lstrip("`").rstrip("`")
-
             # Find the first open brace
             start = cleaned.find("{")
             if start == -1:
                 raise ValueError("No opening brace found")
-
             # Manually extract everything from the first brace
             json_candidate = cleaned[start:]
-
             # If there's no closing brace, add one
             if not json_candidate.strip().endswith("}"):
                 json_candidate += "}"
-
             # Try parsing
             return json5.loads(json_candidate)
-
         except Exception as e:
-            print("Could not clean/parse JSON5:", raw_text)
-            print("Error detail:", e)
+            self.logger.error(f"Could not clean/parse JSON5 from text: {raw_text}")
+            self.logger.error(f"Parsing error detail: {e}")
             return "Error"
 
     def clean_lat_long(self):
@@ -474,10 +448,8 @@ class NfnCsvCreate():
     def has_matching_substring(self, row, column1, column2):
         fullname_parts = str(row[column1]).split()  # Split fullname into parts
         name_matched_parts = str(row[column2]).split()  # Split name_matched into parts
-
         # Check if any part in fullname matches name_matched (case-insensitive)
         return any(f.lower() == n.lower() for f in fullname_parts for n in name_matched_parts)
-
 
     def run_all_methods(self):
         self.rename_columns()
@@ -492,18 +464,14 @@ class NfnCsvCreate():
             self.master_csv.loc[self.row.name] = self.row
 
         self.clean_habitat_specimen_description_llm()
-        self.master_csv.to_csv(f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}"
-                               f"final_nfn_{remove_non_numerics(self.csv_name)}.csv",
-                               sep=',',  # Change to '\t' for tab, '|' for pipe, etc. if needed
-                               quoting=csv.QUOTE_ALL,  # Quote all entries
-                               index=False  # Set to True if you want to include the DataFrame index
-                               )
+        self.master_csv.to_csv(
+            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_{remove_non_numerics(self.csv_name)}.csv",
+            sep=',',       # Change to '\t' for tab, '|' for pipe, etc. if needed
+            quoting=csv.QUOTE_ALL,  # Quote all entries
+            index=False    # Set to True if you want to include the DataFrame index
+        )
 
-
-#test
-
-# pic_config = get_config("Botany_PIC")
-#
-# nfn_csv = NfnCsvCreate(csv_name="26925_From_Phlox_Gilia_unreconciled.csv", coll="Botany_PIC", config=pic_config)
-#
-# nfn_csv.run_all_methods()
+# Test code (uncomment to run)
+pic_config = get_config("Botany_PIC")
+nfn_csv = NfnCsvCreate(csv_name="26925_From_Phlox_Gilia_unreconciled.csv", coll="Botany_PIC", config=pic_config)
+nfn_csv.run_all_methods()
