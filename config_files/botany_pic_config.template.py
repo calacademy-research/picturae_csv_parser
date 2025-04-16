@@ -30,3 +30,116 @@ DIGILEAP_DESTINATION = f'{sla}path{sla}to{sla}digileap_folder"'
 # title substrings to seperate from agent names
 AGENT_FIRST_TITLES = []
 AGENT_LAST_TITLES = []
+
+# nfn clean config terms
+
+NFN_BLACKLIST = ["username1", "username2", "username3"]
+
+NFN_CSV_FOLDER = "nfn_csv"
+
+OLLAMA_URL = "http://10.1.1.1.1:11111"
+
+# placeholder bounding elevation (6190 highest in North America)
+ELEV_UPPER_BOUND = 6190
+
+ACCEPTED_DATUMS = ["WGS", "NAD", "OSGRB", "ETRS", "ED", "GDA", "JGD", "Tokyo", "KGD",
+                    "TWD", "BJS", "XAS", "GCJ", "BD", "PZ", "GTRF", "CGCS",
+                    "CGS", "ITRF", "ITRS", "SAD"]
+
+HAB_SPEC_LLM_PROMPT = ( "You are a label-cleaning AI that strictly extracts *verbatim* text for fields: `habitat`, `specimen_description` and 'locality'. "
+                        "You will be given a JSON object with two or three input fields: `habitat` and `specimen_description`, and sometimes 'locality' but not always locality. "
+                        "Each field may include mixed information. Your job is to remove all content that does not belong in each field according to the rules below.\n\n"
+                        "📌 DO NOT add or infer any new information. ONLY retain verbatim content. If a phrase is required for sentence completeness, you may retain it even if it's borderline.\n\n"
+                        "🔒 Follow these strict rules:\n\n"
+                        "▶️ VERBATIM ONLY:\n"
+                        "- Do not rephrase, summarize, or infer meaning.\n"
+                        "- Do not turn phrases into lists or categories.\n"
+                        "- Use exact phrases from the label text only.\n\n"
+                        "▶️ FIELD DEFINITIONS & RULES:\n"
+                        "**Habitat**:\n"
+                        "- Describes the physical environment where the specimen grows.\n"
+                        "- Include: substrate (e.g. 'dry sand', 'loamy soil'), associated species, vegetation type (e.g. 'open grassland'), floodplains, power lines, and life zones.\n"
+                        "- General terms like 'along road', 'hills', 'on canyon slopes', or 'trail edge' go here.\n"
+                        "- named Burns or fires, like 'Bean Camp burn' or 'area of Carr Fire' go here. Un-named burns can also be included\n"
+                        "- Include: Associated Species and phrases like 'growing alongside' or 'associated species'"
+                        "- ❌ Do NOT include place names, geographic features, road names, or phrases like 'near [named place]'. These belong to locality.\n"
+                        "- ❌ Do NOT include details about the plant itself like height, color, or flowers.\n\n"
+                        "**Specimen Description**:\n"
+                        "- Describes the physical features of the plant only, not taxonomy or scientific name or author.\n"
+                        "- Include: size, color, shape, condition, maturity, flowers, inflorescence, abundance (e.g. 'common', 'many in bloom', 'rare', 'locally common/rare' etc.), and chromosome count like 'n=14'.\n"
+                        "- ❌ Do NOT include habitats or locality descriptions (e.g. 'grassland', 'near Glen Alpine').\n"
+                        "- ❌ Do NOT include place names.\n\n"
+                        "- ❌ Do NOT include Scientific Name or Author e.g. Eriastrum sapphirinum (Eastw.) or collomia linearis etc ...\n"
+                        "**Locality**:\n"
+                        "- Includes specific named places: cities, roads, parks, regions, mountain ranges, distances or bearings (e.g. '3 miles west of Jacumba').\n"
+                        "- ❌ Do NOT include general environments like 'grassland', 'floodplain', or 'roadside'.\n"
+                        "- ❌ Do NOT include plant traits or descriptions.\n\n"
+                        "▶️ FORMATTING:\n"
+                        "- Return a **valid JSON object**, like: {\"habitat\": \"...\", \"specimen_description\": \"...\", \"locality\": \"...\"}\n"
+                        "- If a field is missing, return an empty string: \"field\": \"\"\n"
+                        "- Do not wrap in markdown or include extra explanation.\n\n"
+                        "▶️ EXAMPLES:\n"
+                        "- Input: 'Dry sandy soil under sagebrush. Near McGee Creek. Small annual herb with yellow flowers.'\n"
+                        "- Output: {\"habitat\": \"Dry sandy soil under sagebrush.\", \"specimen_description\": \"Small annual herb with yellow flowers.\", \"locality\": \"Near McGee Creek.\"}\n"
+                        "- Input: 'Along roadside near Mono Co. border. Red flowers. Open grassland with scattered shrubs.'\n"
+                        "- Output: {\"habitat\": \"Along roadside. Open grassland with scattered shrubs.\", \"specimen_description\": \"Red flowers.\", \"locality\": \"Near Mono Co. border.\"}\n"
+                    )
+
+
+NFN_COL_DICT = {
+            'Barcode': 'Barcode',
+            'Country': 'Country',
+            'State': 'State',
+            'County': 'County',
+            'Locality': 'Locality',
+            'Genus': 'Genus',
+            'Species': 'Species',
+            'Epithet_1': 'Epithet_1',
+            'subject_id': 'subject_id',
+            'CollectorNumber': 'CollectorNumber',
+            'classification_id': 'classification',
+            'user_name': 'user_name',
+            'T18_Herbarium Code_1': 'modifier',  # herbarium code
+            'T17_Accession Number _1': 'AltCatalogNumber',  # accession number
+            'T20_Habitat_1': 'Remarks',  # Habitat
+            'T21_Plant Description_1': 'Text1',  # specimen description
+            'T23_Elevation - Minimum_1': 'MinElevation',
+            'T24_Elevation - Maximum_1': 'MaxElevation',
+            'T25_Elevation Units_1': 'OriginalElevationUnit',
+            'T5_Are there geographic coordinates present_1': "coordinates_present_1",
+            'T12_Township_1': 'Township_1',
+            'T13_Range_1': 'Range_1',
+            'T14_Section_1': 'Section_1',
+            'T27_Map Quadrangle_1': 'Quadrangle_1',
+            'T7_UTM Zone_1': "Utm_zone_1",
+            'T9_UTM Easting_1': "Utm_easting_1",
+            'T8_UTM Northing_1': "Utm_northing_1",
+            'T11_UTM - Datum_1': "Utm_datum_1",
+            'T4_Latitude coordinates - Verbatim_1': 'lat_verbatim_1',
+            'T3_Longitude coordinates - Verbatim _1': 'long_verbatim_1',
+            'T6_Datum - Latitude, Longitude_1': 'lat_long_datum_1',
+            'T16_Is there another set of coordinates that need to be transcribed?_1': "coordinates_present_2",
+            'T12_Township_2': 'Township_2',
+            'T13_Range_2': 'Range_2',
+            'T14_Section_2': 'Section_2',
+            'T27_Map Quadrangle_2': 'Quadrangle_2',
+            'T7_UTM Zone_2': "Utm_zone_2",
+            'T9_UTM Easting_2': "Utm_easting_2",
+            'T8_UTM Northing_2': "Utm_northing_2",
+            'T11_UTM - Datum_2': "Utm_datum_2",
+            'T4_Latitude coordinates - Verbatim_2': 'lat_verbatim_2',
+            'T3_Longitude coordinates - Verbatim _2': 'long_verbatim_2',
+            'T6_Datum - Latitude, Longitude_2': 'lat_long_datum_2',
+            'T16_Is there another set of coordinates that need to be transcribed?_2': "coordinates_present_3",
+            'T12_Township_3': 'Township_3',
+            'T13_Range_3': 'Range_3',
+            'T14_Section_3': 'Section_3',
+            'T27_Map Quadrangle_3': 'Quadrangle_3',
+            'T7_UTM Zone_3': "Utm_zone_3",
+            'T9_UTM Easting_3': "Utm_easting_3",
+            'T8_UTM Northing_3': "Utm_northing_3",
+            'T11_UTM - Datum_3': "Utm_datum_3",
+            'T4_Latitude coordinates - Verbatim_3': 'lat_verbatim_3',
+            'T3_Longitude coordinates - Verbatim _3': 'long_verbatim_3',
+            'T6_Datum - Latitude, Longitude_3': 'lat_long_datum_3'
+        }

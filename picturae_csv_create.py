@@ -278,8 +278,8 @@ class CsvCreatePicturae:
             filtered_spec_csv = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
             csv_batch_unmatch = filtered_spec_csv['CSV-BATCH'].unique()
 
-            raise ValueError(f"In the following batches {csv_batch_unmatch}, the"
-                             f" following barcodes not matched to a folder {spec_difference}")
+            raise ValueError(f"In the following batches {sorted(set(csv_batch_unmatch))}, the"
+                             f" following barcodes not matched to a folder {sorted(set(spec_difference))}")
 
 
     def remove_duplicate_barcodes(self):
@@ -395,14 +395,12 @@ class CsvCreatePicturae:
         #
         # self.logger.info("merged csv written")
 
-
     def missing_data_masks(self):
         """missing_data_masks: create masks and filtered csvs for each kind of relevant missing data to flag.
             returns:
                 four filtered csvs --> missing_rank_csv, missing_geography_csv, missing_label_csv, invalid_date_csv
         """
         # flags in missing rank columns when > 1 infra-specific rank.
-
         rank1_missing = (self.record_full['Rank 1'].isna() | (self.record_full['Rank 1'] == '')) & \
                         (self.record_full['Epithet 1'].notna() & (self.record_full['Epithet 1'] != ''))
 
@@ -412,21 +410,18 @@ class CsvCreatePicturae:
         missing_rank_csv = self.record_full.loc[rank1_missing & rank2_missing]
 
         # flags missing family in column
-
         missing_family = (self.record_full['Family'].isna() | (self.record_full['Family'] == '') |
                           (self.record_full['Family'].isnull()))
 
         missing_family_csv = self.record_full.loc[missing_family]
 
         # flags if missing higher geography
-
         missing_geography = (self.record_full['Country'].isna() | (self.record_full['Country'] == '') |
                              (self.record_full['Country'].isnull()))
 
         missing_geography_csv = self.record_full.loc[missing_geography]
 
         # flags if label is covered or folded.
-
         missing_label = ["covered" in str(row).lower() or "folded" in str(row).lower()
                          for row in self.record_full['sheet_notes']]
 
@@ -437,15 +432,14 @@ class CsvCreatePicturae:
         invalid_end_date = ~self.record_full['end_date'].apply(validate_date)
 
         invalid_date_mask = invalid_start_date | invalid_end_date
-
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
         # flags verbatim date too long greater than 50 char and stores them in new label_data column
+
         invalid_verbatim_mask = self.record_full["verbatim_date"].str.len() > 50
 
         # adding lable data and new genus boolean
         self.record_full['label_data'] = ""
-
         self.record_full['new_genus'] = False
 
         self.record_full.loc[invalid_verbatim_mask, 'label_data'] = self.record_full.loc[
@@ -489,7 +483,6 @@ class CsvCreatePicturae:
 
                 message += message_dict[key]
                 message += f" {item_set} in batches {batch_set}\n\n"
-
         if message:
             raise ValueError(message.strip())
 
