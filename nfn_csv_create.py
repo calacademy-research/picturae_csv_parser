@@ -10,37 +10,49 @@ import logging
 import json5
 import json
 import requests
-from taxon_tools.BOT_TNRS import process_taxon_resolve
-
-# Configure logging for the module. You can adjust level and formatting as needed.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
-)
+import argparse
 
 class NfnCsvCreate():
-    def __init__(self, csv_name, coll, config):
-        self.csv_name = csv_name
+    def __init__(self, coll, logging_level):
+
+        self.logger = logging.getLogger("NfnCreatePicturae")
+        self.logger.setLevel(logging_level)
+
+        self.config = get_config(coll)
 
         self.row = None
         self.index = None
 
-        self.logger = logging.getLogger(f'Client.{self.__class__.__name__}')
-
-        self.master_csv = pd.read_csv(f"nfn_csv{os.path.sep}{csv_name}", dtype=str, low_memory=False)
-
-        self.config = get_config(coll)
+        self.master_csv = self.read_and_concat_csvs()
 
         self.datums = ["WGS", "NAD", "OSGRB", "ETRS", "ED", "GDA", "JGD", "Tokyo", "KGD",
                        "TWD", "BJS", "XAS", "GCJ", "BD", "PZ", "GTRF", "CGCS",
                        "CGS", "ITRF", "ITRS", "SAD"]
 
-        self.sql_csv_tools = SqlCsvTools(config=config)
+        self.sql_csv_tools = SqlCsvTools(config=self.config)
 
-        # self.ollama_url = "http://10.1.10.176:11434"
-        self.ollama_url = "http://10.1.10.183:11434"
+        self.ollama_url = self.config.ollama_url
 
         self.nominatum_dict = {}
+
+
+    def read_and_concat_csvs(self):
+        """reads in and concatenates all csvs in the nfn csv folder"""
+        csv_folder = self.config.nfn_csv_folder
+        if not os.path.exists(csv_folder):
+            raise FileNotFoundError(f"The folder {csv_folder} does not exist.")
+
+        csv_files = [os.path.join(csv_folder, f) for f in os.listdir(csv_folder)
+                     if f.endswith(".csv") and os.path.isfile(os.path.join(csv_folder, f))]
+
+        self.logger.info(f"Found {len(csv_files)} CSVs in {csv_folder}")
+
+        master_csv = pd.concat(
+            [pd.read_csv(csv, dtype=str, low_memory=False) for csv in csv_files],
+            ignore_index=True
+        )
+        return master_csv
+
 
     def detect_unknown_values(self, string):
         if string.lower() in ['none', 'unknown', 'unkown', '', 'nan'] or pd.isna(string):
@@ -440,17 +452,12 @@ class NfnCsvCreate():
     def gsv_coords(self):
         pass
 
-    def match_two_records(self):
-        pass
-
-    def bias_towards_transcriber(self):
-        pass
-
     def has_matching_substring(self, row, column1, column2):
         fullname_parts = str(row[column1]).split()  # Split fullname into parts
         name_matched_parts = str(row[column2]).split()  # Split name_matched into parts
         # Check if any part in fullname matches name_matched (case-insensitive)
         return any(f.lower() == n.lower() for f in fullname_parts for n in name_matched_parts)
+
 
     def run_all_methods(self):
         self.rename_columns()
@@ -465,14 +472,38 @@ class NfnCsvCreate():
             self.master_csv.loc[self.row.name] = self.row
 
         self.clean_habitat_specimen_description_llm()
+
+        os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
+
         self.master_csv.to_csv(
-            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_{remove_non_numerics(self.csv_name)}.csv",
-            sep=',',       # Change to '\t' for tab, '|' for pipe, etc. if needed
-            quoting=csv.QUOTE_ALL,  # Quote all entries
-            index=False    # Set to True if you want to include the DataFrame index
+            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_combined.csv",
+            sep=',',
+            quoting=csv.QUOTE_ALL,
+            index=False
         )
 
-# Test code (uncomment to run)
-pic_config = get_config("Botany_PIC")
-nfn_csv = NfnCsvCreate(csv_name="26925_From_Phlox_Gilia_unreconciled.csv", coll="Botany_PIC", config=pic_config)
-nfn_csv.run_all_methods()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Runs checks on NFN csvs and returns a wrangled csv ready for upload.")
+
+    parser.add_argument('-v', '--verbosity',
+                        help='verbosity level. repeat flag for more detail',
+                        default=0,
+                        dest='verbose',
+                        action='count')
+
+    parser.add_argument("-l", "--log_level", nargs="?",
+                        default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                        help="Logging level (default: %(default)s)")
+
+    parser.add_argument("-c", "--collection", nargs="?",
+                        default="Botany_PIC", choices=["Botany_PIC", "iz", "ich"],
+                        help="Collection type (default: %(default)s)")
+
+    args = parser.parse_args()
+
+    logging.basicConfig(level=getattr(logging, args.log_level.upper()))
+
+    picturae_csv_instance = NfnCsvCreate(coll=args.collection, logging_level=args.log_level)
+    picturae_csv_instance.run_all_methods()
