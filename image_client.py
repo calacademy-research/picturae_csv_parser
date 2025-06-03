@@ -294,12 +294,13 @@ class ImageClient:
         return url, attach_loc
 
     # works for just basename +ext. "exact" does a sql "like" operation
-    def check_image_db_if_filename_imported(self, collection, filename, exact=False):
+
+    def check_image_db_if_file_imported(self, collection, filename, search_type='path', exact=False):
         params = {
             'file_string': quote(filename),
             'coll': collection,
             'exact': exact,
-            'search_type': 'filename',
+            'search_type': search_type,
             'token': self.generate_token(quote(filename))
         }
 

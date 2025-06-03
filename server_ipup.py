@@ -41,7 +41,7 @@ def ip_replace(filename: str):
         content = file.read()
     ip_ad = ip_getter()
     # Replace the string
-    new_content = re.sub(r'\b10.1.12.\w*\b', ip_ad, content)
+    new_content = re.sub(r'\b10\.1\.(12|13)\.\d+\b', ip_ad, content)
 
     # Open the file in write mode
     with open(filename, 'w') as file:
