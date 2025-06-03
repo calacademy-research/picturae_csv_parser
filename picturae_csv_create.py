@@ -678,12 +678,9 @@ class CsvCreatePicturae:
         """checks if image name/barcode already in image_db"""
         self.record_full['image_present_db'] = None
 
-        # Extract file names once and convert to lowercase.
-        self.record_full['file_name'] = self.record_full['image_path'].apply(lambda x: os.path.basename(x).lower())
-
-        self.record_full['image_present_db'] = self.record_full['file_name'].apply(
-            lambda filename: self.image_client.check_image_db_if_filename_imported(
-                collection="Botany", filename=filename, exact=True
+        self.record_full['image_present_db'] = self.record_full['image_path'].apply(
+            lambda filepath: self.image_client.check_image_db_if_file_imported(
+                collection="Botany", filename=filepath, search_type='path', exact=True
             )
         )
 
