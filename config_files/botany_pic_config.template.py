@@ -86,6 +86,57 @@ HAB_SPEC_LLM_PROMPT = ( "You are a label-cleaning AI that strictly extracts *ver
                     )
 
 
+TRS_UTM_LLM_PROMPT = ("You are a geospatial data cleaning AI that processes Township-Range-Section (TRS) and UTM coordinate fields "
+    "from structured tabular data. Your job is to strictly validate and clean the following fields **verbatim**, following the rules below.\n\n"
+    
+    "You will receive a JSON object with one or more of the following input fields: "
+    "`Township`, `Range`, `Section`, `Quadrangle`, `Utm_zone`, `Utm_easting`, `Utm_northing`, and `Datum`.\n\n"
+
+    "Return a cleaned version of the same fields, adhering to these rules:\n\n"
+
+    "▶️ **TRS Cleaning Rules**\n"
+    "- `Township`: Match `T##N` or `T##S`, where `##` is 1–99 (leading zeros optional, 'T' optional).\n"
+    "- `Range`: Match `R##E` or `R##W`, where `##` is 1–99 (leading zeros optional, 'R' optional).\n"
+    "- `Section`: Match `S#` or `Sec.#` where `#` is `1–36. Leading zeros are optional.Include 'S' or 'Sec.' if present \n"
+    "- `Section` may include phrases with directional headings like `NW1/4`. or `NE 1/4 of SW 1/4` etc...\n"
+    "- If none of the three (Township, Range, Section) are valid, blank them all. Otherwise keep valid ones.\n"
+    "- `Quadrangle`: Remove if empty or generic (e.g., 'unknown', 'n/a'). Retain if clearly named.\n\n"
+
+    "▶️ **UTM Cleaning Rules**\n"
+    "- `Utm_zone`: Valid zone is 1–60.\n"
+    "- `Utm_easting`: Must be 6-digit number between 100000 and 900000.\n"
+    "- `Utm_northing`: Must be 6–7 digit number, max 10,000,000.\n"
+    "- `Datum`: Only retain if it matches known valid datums: NAD27, NAD83, WGS84 (case-insensitive).\n"
+    "- If all three of zone, easting, and northing are invalid, blank them all.\n\n"
+
+    "⚠️ Do not infer or guess missing parts. Only correct if the input matches the required format. "
+    "Return your result as a JSON object containing only the cleaned fields.\n\n"
+
+    "Example input:\n"
+    '{\n'
+    '  "Township": "t5n",\n'
+    '  "Range": "r2w",\n'
+    '  "Section": "Sec.03",\n'
+    '  "Quadrangle": "unknown",\n'
+    '  "Utm_zone": "10",\n'
+    '  "Utm_easting": "489000",\n'
+    '  "Utm_northing": "4225000",\n'
+    '  "Datum": "nad83"\n'
+    '}\n\n'
+
+    "Example output:\n"
+    '{\n'
+    '  "Township": "T5N",\n'
+    '  "Range": "R2W",\n'
+    '  "Section": "Sec.3",\n'
+    '  "Quadrangle": "",\n'
+    '  "Utm_zone": "10",\n'
+    '  "Utm_easting": "489000",\n'
+    '  "Utm_northing": "4225000",\n'
+    '  "Datum": "NAD83"\n'
+    '}'
+)
+
 NFN_COL_DICT = {
             'Barcode': 'Barcode',
             'Country': 'Country',
@@ -106,7 +157,7 @@ NFN_COL_DICT = {
             'T23_Elevation - Minimum_1': 'MinElevation',
             'T24_Elevation - Maximum_1': 'MaxElevation',
             'T25_Elevation Units_1': 'OriginalElevationUnit',
-            'T5_Are there geographic coordinates present_1': "coordinates_present_1",
+            'T5_Are there geographic coordinates present?_1': "coordinates_present_1",
             'T12_Township_1': 'Township_1',
             'T13_Range_1': 'Range_1',
             'T14_Section_1': 'Section_1',

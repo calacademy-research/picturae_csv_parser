@@ -11,6 +11,7 @@ import json5
 import json
 import requests
 import argparse
+import math
 
 class NfnCsvCreate():
     def __init__(self, coll, logging_level):
@@ -181,95 +182,71 @@ class NfnCsvCreate():
             coord = ''
         return coord
 
-    # Remember to improve this to capture last edge cases.
-    def regex_check_TRS(self):
-        """Compares each TRS entry against regex."""
-        township_regex = re.compile(r'^T?\s*(0?[1-9]|[1-9][0-9])(N|S)$', re.IGNORECASE)
-        range_regex = re.compile(r'^R?\s*(0?[1-9]|[1-9][0-9])(E|W)$', re.IGNORECASE)
-        section_regex = re.compile(r'^S?\s*(0?[1-9]|[1-2][0-9]|3[0-6])$', re.IGNORECASE)
+    def clean_TRS_LLM(self):
+        cleaned_rows = []
+        system_prompt = self.config.TRS_UTM_LLM_PROMPT
 
-        column_names = list(self.master_csv.columns)
-        matches = sum([name.startswith("Township") for name in column_names])
+        for index, row in self.master_csv.iterrows():
 
-        for i in range(1, matches + 1):
-            try:
-                trs_township = str(self.row.get(f"Township_{i}", "")).strip()
-                trs_range = str(self.row.get(f"Range_{i}", "")).strip()
-                trs_section = str(self.row.get(f"Section_{i}", "")).strip()
-                trs_map_quadrangle = str(self.row.get(f"Quadrangle_{i}", "")).strip()
-            except Exception as e:
-                self.logger.error(f"Error accessing TRS fields: {e}")
-                break
+            matches = sum(name.startswith("Township_") for name in self.master_csv.columns)
 
-            if any(not pd.isna(x) and x is not None and not self.detect_unknown_values(str(x))
-                   for x in [trs_township, trs_range, trs_section, trs_map_quadrangle]):
-                trs_township = self.regex_check_coord(coord=trs_township, regex_pattern=township_regex, max_num=99)
-                trs_range = self.regex_check_coord(coord=trs_range, regex_pattern=range_regex, max_num=99)
-                trs_section = self.regex_check_coord(coord=trs_section, regex_pattern=section_regex, max_num=36)
 
-                if not all(val in ["", "."] for val in [trs_township, trs_range, trs_section]):
-                    if trs_map_quadrangle and not self.detect_unknown_values(trs_map_quadrangle):
-                        pass
-                    else:
-                        trs_map_quadrangle = ""
+            for i in range(1, matches +1 ):
+                coord_presence_col = f"coordinates_present_{i}"
+                coord_type = str(row.get(coord_presence_col, "")).strip()
+
+                # Only process TRS or UTM
+                if coord_type not in [
+                    "Yes - TRS (Township Range Section)",
+                    "Yes - UTM (Universal Transverse Mercator)"
+                ]:
+                    continue
+
+                # Build input payload
+                trs_payload = {
+                    "Township": str(row.get(f"Township_{i}", "")),
+                    "Range": str(row.get(f"Range_{i}", "")),
+                    "Section": str(row.get(f"Section_{i}", "")),
+                    "Quadrangle": str(row.get(f"Quadrangle_{i}", "")),
+                    "Utm_zone": str(row.get(f"Utm_zone_{i}", "")),
+                    "Utm_easting": str(row.get(f"Utm_easting_{i}", "")),
+                    "Utm_northing": str(row.get(f"Utm_northing_{i}", "")),
+                    "Datum": str(row.get(f"Utm_datum_{i}", ""))
+                }
+
+                # Check if there's any actual value to clean
+                if all(v.strip() in ["", "nan", "NaN"] for v in trs_payload.values()):
+                    continue
+
+                # Send to LLM
+                response = self.send_to_llm(json.dumps(trs_payload), system_prompt=system_prompt)
+                self.logger.info(f"Row {index}, coord set {i} - LLM returned: {response}")
+
+                if isinstance(response, dict):
+                    key_mapping = {
+                        "Township": f"Township_{i}",
+                        "Range": f"Range_{i}",
+                        "Section": f"Section_{i}",
+                        "Quadrangle": f"Quadrangle_{i}",
+                        "Utm_zone": f"Utm_zone_{i}",
+                        "Utm_easting": f"Utm_easting_{i}",
+                        "Utm_northing": f"Utm_northing_{i}",
+                        "Datum": f"Utm_datum_{i}"
+                    }
+                    for llm_key, target_col in key_mapping.items():
+                        if llm_key in response:
+                            row[target_col] = response[llm_key]
                 else:
-                    trs_map_quadrangle = ""
-            else:
-                trs_township = ""
-                trs_range = ""
-                trs_section = ""
-                trs_map_quadrangle = ""
+                    self.logger.warning(f"Row {index}, coord set {i} - LLM failed: {response}")
 
-            self.row[f'Township_{i}'] = trs_township
-            self.row[f'Range_{i}'] = trs_range
-            self.row[f'Section{i}'] = trs_section
-            self.row[f'Quadrangle_{i}'] = trs_map_quadrangle
+            cleaned_rows.append(row)
 
-    def regex_check_UTM(self):
-        """Compares each UTM entry against regex and maximum numeric range.
-           Checks utm datum against list of acceptable datum codes.
-        """
-        zone_regex = re.compile(r'^\s*(0?[1-9]|[1-5][0-9]|60)\s*$')
-        easting_regex = re.compile(r'^\s*([1-8][0-9]{5}|900000)$', re.IGNORECASE)
-        northing_regex = re.compile(r'^\s*(\d{1,7}|[1-9]\d{6}|10000000)$', re.IGNORECASE)
-
-        column_names = list(self.master_csv.columns)
-        matches = sum([name.startswith("Township") for name in column_names])
-
-        for i in range(1, matches + 1):
-            try:
-                zone = remove_non_numerics(str(self.row.get(f"Utm_zone_{i}", "")).strip())
-                easting = remove_non_numerics(str(self.row.get(f"Utm_easting_{i}", "")).strip())
-                northing = remove_non_numerics(str(self.row.get(f"Utm_northing_{i}", "")).strip())
-                utm_datum = remove_non_numerics(str(self.row.get(f"Datum_{i}", "")).strip().upper())
-            except Exception as e:
-                self.logger.error(f"Error accessing UTM fields: {e}")
-                break
-
-            if any(not pd.isna(x) and x is not None and not self.detect_unknown_values(str(x))
-                   for x in [zone, easting, northing]):
-                zone = self.regex_check_coord(coord=zone, regex_pattern=zone_regex, max_num=60)
-                easting = self.regex_check_coord(coord=easting, regex_pattern=easting_regex, max_num=900000)
-                northing = self.regex_check_coord(coord=northing, regex_pattern=northing_regex, max_num=10000000)
-                if not all(val in ["", "."] for val in [zone, easting, northing]):
-                    if any(datum in utm_datum for datum in self.datums):
-                        pass
-                    else:
-                        utm_datum = ""
-            else:
-                zone = ""
-                easting = ""
-                northing = ""
-                utm_datum = ""
-
-            self.row[f'Utm_zone_{i}'] = zone
-            self.row[f'Utm_easting_{i}'] = easting
-            self.row[f'Utm_section_{i}'] = northing
-            self.row[f'Datum_{i}'] = utm_datum
+        self.master_csv = pd.DataFrame(cleaned_rows)
 
     def clean_habitat_specimen_description_llm(self):
         cleaned_habitats = []
         cleaned_specimen_desc = []
+        system_prompt = self.config.HAB_SPEC_LLM_PROMPT
 
         for index, row in self.master_csv.iterrows():
             habitat = row['Remarks']
@@ -284,8 +261,7 @@ class NfnCsvCreate():
                 "habitat": habitat if isinstance(habitat, str) else "",
                 "specimen_description": specimen_description if isinstance(specimen_description, str) else ""
             })
-
-            structured_data = self.send_to_llm(text)
+            structured_data = self.send_to_llm(text, system_prompt=system_prompt)
             self.logger.info(f"LLM returned: {structured_data}")
 
             # If response failed or isn't dict-like, return original
@@ -297,12 +273,12 @@ class NfnCsvCreate():
                 cleaned_habitats.append(structured_data.get("habitat", ""))
                 cleaned_specimen_desc.append(structured_data.get("specimen_description", ""))
 
-        self.master_csv['cleaned_remarks'] = cleaned_habitats
+        self.master_csv['cleaned_habitat'] = cleaned_habitats
         self.master_csv['cleaned_spec_desc'] = cleaned_specimen_desc
 
-    def send_to_llm(self, user_input):
+
+    def send_to_llm(self, user_input, system_prompt):
         url = f"{self.ollama_url}/api/chat"
-        system_prompt = self.config.HAB_SPEC_LLM_PROMPT
         try:
             self.logger.info(f"Sending request to: {url}")
             response = requests.post(
@@ -358,12 +334,101 @@ class NfnCsvCreate():
         # Check if any part in fullname matches name_matched (case-insensitive)
         return any(f.lower() == n.lower() for f in fullname_parts for n in name_matched_parts)
 
+    def filter_lat_long_frame(self):
+        """Only keeps lat/long columns from processing if they exist."""
+        columns = [
+            'lat_verbatim_1', 'long_verbatim_1',
+            'lat_verbatim_2', 'long_verbatim_2',
+            'lat_verbatim_3', 'long_verbatim_3',
+        ]
+        existing_columns = [col for col in columns if col in self.master_csv.columns]
+        return self.master_csv[existing_columns].copy()
 
-    def clean_lat_long(self):
-        pass
+    def extract_coords_for_column_pair(self, coord_frame, lat_col, lon_col):
+        """
+        Converts latitude/longitude pair into a list of [lat, lon] lists,
+        skipping any rows where lat or lon is NaN or unparseable.
+        """
+        coords = []
+        for _, row in coord_frame.iterrows():
+            try:
+                lat = float(row[lat_col])
+                lon = float(row[lon_col])
+            except (ValueError, TypeError):
+                # couldn't parse to float
+                continue
 
-    def gsv_coords(self):
-        pass
+            # drop NaNs
+            if math.isnan(lat) or math.isnan(lon):
+                continue
+
+            coords.append([lat, lon])
+
+        return coords
+
+    def batch_query_gvs(
+            self,
+            coord_num: int,
+            coord_frame: pd.DataFrame,
+            api_url: str = "https://gvsapi.xyz/gvs_api.php",
+            mode: str = "resolve",
+            maxdist: float | None = 10,
+            maxdistrel: float | None = 0.1
+    ) -> pd.DataFrame | None:
+        """
+        Batch‑queries the GVS API by building a payload of the form:
+        {
+          "opts": { "mode": "...", "maxdist": ..., "maxdistrel": ... },
+          "data": [ [lat1, lon1], [lat2, lon2], … ]
+        }
+        """
+
+        # 1) pull out only the finite coords
+        data = self.extract_coords_for_column_pair(
+            coord_frame,
+            f"lat_verbatim_{coord_num}",
+            f"long_verbatim_{coord_num}"
+        )
+        if not data:
+            print("No valid coordinates for batch", coord_num)
+            return None
+
+        # 2) build opts exactly as in R
+        opts: dict[str, float | str] = {"mode": mode}
+        if maxdist is not None:
+            opts["maxdist"] = maxdist
+        if maxdistrel is not None:
+            opts["maxdistrel"] = maxdistrel
+
+        payload = {
+            "opts": opts,
+            "data": data
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "charset": "UTF-8"
+        }
+
+        try:
+            # 3) POST the JSON exactly as R does
+            resp = requests.post(api_url, headers=headers, data=json.dumps(payload))
+            resp.raise_for_status()
+            return pd.DataFrame(resp.json())
+
+        except requests.exceptions.RequestException as e:
+            print(f"An error occurred: {e}")
+            return None
+
+    def clean_coords(self):
+        """Loops through each lat_verbatim_X column and prints the GVS results."""
+        coord_frame = self.filter_lat_long_frame()
+        matches = sum(name.startswith("lat_verbatim_") for name in coord_frame.columns)
+
+        for i in range(1, matches + 1):
+            df = self.batch_query_gvs(coord_num=i, coord_frame=coord_frame)
+            print(f"Results for lat_verbatim_{i}:\n", df)
 
     def run_all_methods(self):
         self.rename_columns()
@@ -372,11 +437,10 @@ class NfnCsvCreate():
             self.row = row
             self.index = index
             self.clean_elevation()
-            self.regex_check_TRS()
-            self.regex_check_UTM()
-            self.clean_lat_long()
             self.master_csv.loc[self.row.name] = self.row
 
+        self.clean_coords()
+        self.clean_TRS_LLM()
         self.clean_habitat_specimen_description_llm()
 
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
