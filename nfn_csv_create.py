@@ -182,16 +182,16 @@ class NfnCsvCreate():
             coord = ''
         return coord
 
-
-    # Remember to improve this to capture last edge cases., possibly modify this to use an llm query
-
     def clean_TRS_LLM(self):
         cleaned_rows = []
         system_prompt = self.config.TRS_UTM_LLM_PROMPT
 
         for index, row in self.master_csv.iterrows():
 
-            for i in [1, 2, 3]:  # extend if needed
+            matches = sum(name.startswith("Township_") for name in self.master_csv.columns)
+
+
+            for i in range(1, matches +1 ):
                 coord_presence_col = f"coordinates_present_{i}"
                 coord_type = str(row.get(coord_presence_col, "")).strip()
 
