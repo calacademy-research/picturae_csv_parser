@@ -612,7 +612,7 @@ class CsvCreatePicturae:
         self.record_full['image_path'] = self.record_full['image_path'].apply(
             lambda path_img: path.basename(path_img))
 
-        self.record_full['image_path'] = self.record_full['CSV_batch'] + f"{os.path.sep}undatabased" + \
+        self.record_full['image_path'] = self.path_prefix + self.record_full['CSV_batch'] + f"{os.path.sep}undatabased" + \
                                          f"{os.path.sep}" + self.record_full['image_path']
 
 
@@ -702,7 +702,7 @@ class CsvCreatePicturae:
         """checks that each image exists, creating boolean column for later use"""
 
         self.record_full['image_valid'] = self.record_full.apply(
-                                          lambda row: os.path.exists(f"{self.path_prefix}{row['image_path']}")
+                                          lambda row: os.path.exists(f"{row['image_path']}")
                                                                         or str_to_bool(row['duplicate']) is True,
                                                                         axis=1)
 

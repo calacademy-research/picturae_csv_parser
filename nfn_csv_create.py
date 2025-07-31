@@ -35,6 +35,12 @@ class NfnCsvCreate():
         self.nominatum_dict = {}
 
 
+    def read_in_prompt(self, filepath):
+        """reads in prompts from .txt files"""
+        with open(f"{filepath}", "r", encoding="utf-8") as f:
+            prompt = f.read()
+        return prompt
+
     def read_and_concat_csvs(self):
         """reads in and concatenates all csvs in the nfn csv folder"""
         csv_folder = self.config.NFN_CSV_FOLDER
@@ -184,7 +190,7 @@ class NfnCsvCreate():
 
     def clean_TRS_LLM(self):
         cleaned_rows = []
-        system_prompt = self.config.TRS_UTM_LLM_PROMPT
+        system_prompt = self.read_in_prompt(filepath=f"prompts/trs_utm_prompt.txt")
 
         for index, row in self.master_csv.iterrows():
 
@@ -246,7 +252,7 @@ class NfnCsvCreate():
     def clean_habitat_specimen_description_llm(self):
         cleaned_habitats = []
         cleaned_specimen_desc = []
-        system_prompt = self.config.HAB_SPEC_LLM_PROMPT
+        system_prompt = self.read_in_prompt(filepath=f"prompts/hab_spec_prompt.txt")
 
         for index, row in self.master_csv.iterrows():
             habitat = row['Remarks']
