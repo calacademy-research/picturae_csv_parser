@@ -738,38 +738,54 @@ class CsvCreatePicturae:
 
         col_list = ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2']
 
-        self.record_full['fulltaxon'] = ''
-        # concatenating together taxonomic columns to create fulltaxon
+        # Build fulltaxon
+        self.record_full['fulltaxon'] = (
+            self.record_full[col_list].fillna('')
+            .apply(lambda x: ' '.join(x[x != '']), axis=1)
+            .str.strip()
+        )
 
-        self.record_full['fulltaxon'] = self.record_full[col_list].fillna('').apply(lambda x: ' '.join(x[x != '']),
-                                                                                    axis=1)
-
-        self.record_full['fulltaxon'] = self.record_full['fulltaxon'].str.strip()
-
-        # Assign "Family" value if "fulltaxon" is empty or contains "missing taxon"
+        # If empty or "missing taxon", fall back to Family
         self.record_full['fulltaxon'] = self.record_full.apply(
-            lambda row: row['Family'] if not row['fulltaxon'] or "missing taxon" in row['fulltaxon']
-            else row['fulltaxon'], axis=1)
+            lambda row: row['Family'] if (not row['fulltaxon'] or 'missing taxon' in row['fulltaxon'])
+            else row['fulltaxon'],
+            axis=1
+        )
 
-        # Query once per unique entry for efficiency
-        unique_fulltaxons = self.record_full[['fulltaxon', 'Hybrid', 'taxname', 'Genus']].drop_duplicates()
+        # take the first occurrence of Hybrid/taxname/Genus per fulltaxon
+        key_df = (
+            self.record_full
+            .loc[:, ['fulltaxon', 'Hybrid', 'taxname', 'Genus']]
+            .dropna(subset=['fulltaxon'])
+            .groupby('fulltaxon', as_index=False)
+            .first()
+        )
 
-        # Apply function and convert results into a DataFrame
-        taxon_map_df = unique_fulltaxons.apply(lambda row: self.taxon_process_row(row), axis=1, result_type='expand')
-        taxon_map_df.columns = ['taxon_id', 'new_genus']
+        # Apply your lookup exactly once per unique fulltaxon
+        taxon_process_output = key_df.apply(lambda row: self.taxon_process_row(row), axis=1, result_type='expand')
+        taxon_process_output.columns = ['taxon_id', 'new_genus']
 
-        taxon_map_df.index = unique_fulltaxons['fulltaxon']
+        # Enforce unique index
+        taxon_map_df = (
+            key_df[['fulltaxon']]
+            .join(taxon_process_output)
+            .set_index('fulltaxon', verify_integrity=True)
+        )
 
-        # Map taxon_id and new genus
+        # Factorize yields [0..n-1] in the order of appearance; use sort=True if you want alphabetical stability
+        codes, uniques = pd.factorize(taxon_map_df.index, sort=True)
+        taxon_map_df['fulltaxon_idx'] = codes  # Int64 dtype by default
+
+        # Map the results back
         self.record_full['taxon_id'] = self.record_full['fulltaxon'].map(taxon_map_df['taxon_id'])
-
         self.record_full['new_genus'] = self.record_full['fulltaxon'].map(taxon_map_df['new_genus'])
+        self.record_full['taxon_idx'] = self.record_full['fulltaxon'].map(taxon_map_df['fulltaxon_idx'])
 
-        # Convert 'taxon_id' to integer type
+        # Keep nullable Int64
         self.record_full['taxon_id'] = self.record_full['taxon_id'].astype(pd.Int64Dtype())
+        self.record_full['taxon_idx'] = self.record_full['taxon_idx'].astype(pd.Int64Dtype())
 
-        self.record_full.drop(columns=["fulltaxon"], inplace=True)
-
+        self.record_full.drop(columns=['fulltaxon'], inplace=True)
 
     def taxon_check_tnrs(self):
         """taxon_check_real:
