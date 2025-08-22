@@ -188,7 +188,7 @@ class NfnCsvCreate():
             coord = ''
         return coord
 
-    def clean_TRS_LLM(self):
+    def clean_trs_utm_llm(self):
         cleaned_rows = []
         system_prompt = self.read_in_prompt(filepath=f"prompts/trs_utm_prompt.txt")
 
@@ -220,13 +220,20 @@ class NfnCsvCreate():
                     "Datum": str(row.get(f"Utm_datum_{i}", ""))
                 }
 
+                # Clear Quadrangle if Township, Range, and Section are all empty
+                if all(not trs_payload[f].strip() for f in ["Township", "Range", "Section"]):
+                    trs_payload["Quadrangle"] = ""
+
+                # Clear Datum if UTM zone, easting, and northing are all empty
+                if all(not trs_payload[f].strip() for f in ["Utm_zone", "Utm_easting", "Utm_northing"]):
+                    trs_payload["Datum"] = ""
+
                 # Check if there's any actual value to clean
                 if all(v.strip() in ["", "nan", "NaN"] for v in trs_payload.values()):
-                    continue
-
-                # Send to LLM
-                response = self.send_to_llm(json.dumps(trs_payload), system_prompt=system_prompt)
-                self.logger.info(f"Row {index}, coord set {i} - LLM returned: {response}")
+                    response = dict.fromkeys(trs_payload, "")
+                else:
+                    response = self.send_to_llm(json.dumps(trs_payload), system_prompt=system_prompt)
+                    self.logger.info(f"Row {index}, coord set {i} - LLM returned: {response}")
 
                 if isinstance(response, dict):
                     key_mapping = {
@@ -436,6 +443,22 @@ class NfnCsvCreate():
             df = self.batch_query_gvs(coord_num=i, coord_frame=coord_frame)
             print(f"Results for lat_verbatim_{i}:\n", df)
 
+            if df is None or df.empty:
+                self.logger.warning(f"No valid results for lat_verbatim_{i}")
+                continue
+
+            df.reset_index(drop=True, inplace=True)
+
+            coord_frame_subset = coord_frame[[f"lat_verbatim_{i}", f"long_verbatim_{i}"]].reset_index()
+
+            merged = pd.concat([coord_frame_subset, df], axis=1)
+
+            for col in df.columns:
+                cleaned_col = f"{col}_{i}" if col not in self.master_csv.columns else f"{col}_{i}_cleaned"
+                self.master_csv.loc[merged["index"], cleaned_col] = merged[col].values
+
+            self.logger.info(f"Merged cleaned coordinates for lat_verbatim_{i} into master_csv.")
+
     def run_all_methods(self):
         self.rename_columns()
         self.remove_records()
@@ -446,7 +469,7 @@ class NfnCsvCreate():
             self.master_csv.loc[self.row.name] = self.row
 
         self.clean_coords()
-        self.clean_TRS_LLM()
+        self.clean_trs_utm_llm()
         self.clean_habitat_specimen_description_llm()
 
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
