@@ -188,16 +188,32 @@ class NfnCsvCreate():
             coord = ''
         return coord
 
-    def clean_TRS_LLM(self):
+
+    def is_blank(self, string) -> bool:
+        if string is None:
+            return True
+        try:
+            if isinstance(string, float) and math.isnan(string):
+                return True
+        except Exception:
+            pass
+        s = str(string).strip().lower()
+        return s in ("", "nan", "none", "null")
+
+    def clean_trs_utm_llm(self):
+        """Uses LLM to clean only rows with TRS and UTM coordinates.
+        Zeroes out Quadrangle when TRS is blank; zeroes out Datum when UTM is blank.
+        Robustly treats '', None, NaN, 'nan', 'NaN', 'None', 'null' as blank.
+        """
+
         cleaned_rows = []
-        system_prompt = self.read_in_prompt(filepath=f"prompts/trs_utm_prompt.txt")
+        system_prompt = self.read_in_prompt(filepath="prompts/trs_utm_prompt.txt")
 
         for index, row in self.master_csv.iterrows():
-
+            # count how many coord sets exist by Township_* columns
             matches = sum(name.startswith("Township_") for name in self.master_csv.columns)
 
-
-            for i in range(1, matches +1 ):
+            for i in range(1, matches + 1):
                 coord_presence_col = f"coordinates_present_{i}"
                 coord_type = str(row.get(coord_presence_col, "")).strip()
 
@@ -208,48 +224,70 @@ class NfnCsvCreate():
                 ]:
                     continue
 
-                # Build input payload
-                trs_payload = {
-                    "Township": str(row.get(f"Township_{i}", "")),
-                    "Range": str(row.get(f"Range_{i}", "")),
-                    "Section": str(row.get(f"Section_{i}", "")),
-                    "Quadrangle": str(row.get(f"Quadrangle_{i}", "")),
-                    "Utm_zone": str(row.get(f"Utm_zone_{i}", "")),
-                    "Utm_easting": str(row.get(f"Utm_easting_{i}", "")),
-                    "Utm_northing": str(row.get(f"Utm_northing_{i}", "")),
-                    "Datum": str(row.get(f"Utm_datum_{i}", ""))
+                # Build input payload from current row
+                trs_township = row.get(f"Township_{i}", "")
+                trs_range = row.get(f"Range_{i}", "")
+                trs_section = row.get(f"Section_{i}", "")
+                trs_quadrangle = row.get(f"Quadrangle_{i}", "")
+
+                utm_zone = row.get(f"Utm_zone_{i}", "")
+                utm_easting = row.get(f"Utm_easting_{i}", "")
+                utm_northing = row.get(f"Utm_northing_{i}", "")
+                utm_datum = row.get(f"Utm_datum_{i}", "")
+
+                coord_payload = {
+                    "Township": str(trs_township),
+                    "Range": str(trs_range),
+                    "Section": str(trs_section),
+                    "Quadrangle": str(trs_quadrangle),
+                    "Utm_zone": str(utm_zone),
+                    "Utm_easting": str(utm_easting),
+                    "Utm_northing": str(utm_northing),
+                    "Datum": str(utm_datum),
                 }
 
-                # Check if there's any actual value to clean
-                if all(v.strip() in ["", "nan", "NaN"] for v in trs_payload.values()):
-                    continue
-
-                # Send to LLM
-                response = self.send_to_llm(json.dumps(trs_payload), system_prompt=system_prompt)
-                self.logger.info(f"Row {index}, coord set {i} - LLM returned: {response}")
-
-                if isinstance(response, dict):
-                    key_mapping = {
-                        "Township": f"Township_{i}",
-                        "Range": f"Range_{i}",
-                        "Section": f"Section_{i}",
-                        "Quadrangle": f"Quadrangle_{i}",
-                        "Utm_zone": f"Utm_zone_{i}",
-                        "Utm_easting": f"Utm_easting_{i}",
-                        "Utm_northing": f"Utm_northing_{i}",
-                        "Datum": f"Utm_datum_{i}"
-                    }
-                    for llm_key, target_col in key_mapping.items():
-                        if llm_key in response:
-                            row[target_col] = response[llm_key]
+                if all(self.is_blank(value) for value in coord_payload.values()):
+                    response = dict.fromkeys(coord_payload.keys(), "")
                 else:
-                    self.logger.warning(f"Row {index}, coord set {i} - LLM failed: {response}")
+                    response = self.send_to_llm(json.dumps(coord_payload), system_prompt=system_prompt)
 
-            cleaned_rows.append(row)
+                    # If LLM failed, still enforce the clearing rules
+                    if not isinstance(response, dict):
+                        self.logger.warning(f"Row {index}, coord set {i} - LLM failed: {response}")
+                        response = coord_payload.copy()
+
+                    trs_blank = all(self.is_blank(response[f]) for f in ["Township", "Range", "Section"])
+
+                    utm_blank = all(self.is_blank(response[f]) for f in ["Utm_zone", "Utm_easting", "Utm_northing"])
+
+                    if trs_blank:
+                        response[f"Quadrangle"] = ""
+                    if utm_blank:
+                        response[f"Datum"] = ""
+
+                    self.logger.info(f"Row {index}, coord set {i} - LLM returned: {response}")
+
+                # Write back to the row
+                key_mapping = {
+                    "Township": f"Township_{i}",
+                    "Range": f"Range_{i}",
+                    "Section": f"Section_{i}",
+                    "Quadrangle": f"Quadrangle_{i}",
+                    "Utm_zone": f"Utm_zone_{i}",
+                    "Utm_easting": f"Utm_easting_{i}",
+                    "Utm_northing": f"Utm_northing_{i}",
+                    "Datum": f"Utm_datum_{i}",
+                }
+                for llm_key, target_col in key_mapping.items():
+                    if llm_key in response:
+                        row[target_col] = response[llm_key]
+
+                cleaned_rows.append(row)
 
         self.master_csv = pd.DataFrame(cleaned_rows)
 
     def clean_habitat_specimen_description_llm(self):
+        """Cleans and separates unstructured strings into habitat and specimen description using a llm api"""
         cleaned_habitats = []
         cleaned_specimen_desc = []
         system_prompt = self.read_in_prompt(filepath=f"prompts/hab_spec_prompt.txt")
@@ -284,6 +322,7 @@ class NfnCsvCreate():
 
 
     def send_to_llm(self, user_input, system_prompt):
+        """building block function which posts the llm api request, assumes default llama3:70b"""
         url = f"{self.ollama_url}/api/chat"
         try:
             self.logger.info(f"Sending request to: {url}")
@@ -314,6 +353,7 @@ class NfnCsvCreate():
             return "Error"
 
     def clean_and_parse_json5(self, raw_text):
+        """parses json output of LLM functions"""
         try:
             # Remove markdown formatting (e.g., ```json)
             cleaned = raw_text.strip().lstrip("`").rstrip("`")
@@ -436,6 +476,22 @@ class NfnCsvCreate():
             df = self.batch_query_gvs(coord_num=i, coord_frame=coord_frame)
             print(f"Results for lat_verbatim_{i}:\n", df)
 
+            if df is None or df.empty:
+                self.logger.warning(f"No valid results for lat_verbatim_{i}")
+                continue
+
+            df.reset_index(drop=True, inplace=True)
+
+            coord_frame_subset = coord_frame[[f"lat_verbatim_{i}", f"long_verbatim_{i}"]].reset_index()
+
+            merged = pd.concat([coord_frame_subset, df], axis=1)
+
+            for col in df.columns:
+                cleaned_col = f"{col}_{i}" if col not in self.master_csv.columns else f"{col}_{i}_cleaned"
+                self.master_csv.loc[merged["index"], cleaned_col] = merged[col].values
+
+            self.logger.info(f"Merged cleaned coordinates for lat_verbatim_{i} into master_csv.")
+
     def run_all_methods(self):
         self.rename_columns()
         self.remove_records()
@@ -446,7 +502,7 @@ class NfnCsvCreate():
             self.master_csv.loc[self.row.name] = self.row
 
         self.clean_coords()
-        self.clean_TRS_LLM()
+        self.clean_trs_utm_llm()
         self.clean_habitat_specimen_description_llm()
 
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
