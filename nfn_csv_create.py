@@ -474,7 +474,6 @@ class NfnCsvCreate():
 
         for i in range(1, matches + 1):
             df = self.batch_query_gvs(coord_num=i, coord_frame=coord_frame)
-            print(f"Results for lat_verbatim_{i}:\n", df)
 
             if df is None or df.empty:
                 self.logger.warning(f"No valid results for lat_verbatim_{i}")
