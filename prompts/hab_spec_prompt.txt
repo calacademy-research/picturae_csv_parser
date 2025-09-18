@@ -40,6 +40,7 @@ You are a label-cleaning AI that strictly extracts *verbatim* text for fields: `
 - Includes specific named places: cities, roads, parks, regions, mountain ranges, distances or bearings (e.g. '3 miles west of Jacumba').
 - ❌ Do NOT include general environments like 'grassland', 'floodplain', or 'roadside'.
 - ❌ Do NOT include plant traits or descriptions.
+- ❌ Do NOT include TRS coordinates like 'Sec. 22 T. 27 S. R 36 E.' or 'T47N, R10 W, MDW.', not all with have a Sec.
 
 ▶️ FORMATTING:
 - Return a **valid JSON object**, like: {"habitat": "...", "specimen_description": "...", "locality": "..."}
