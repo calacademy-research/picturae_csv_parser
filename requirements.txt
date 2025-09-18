@@ -28,7 +28,7 @@ colorama~=0.4.6
 pathlib2~=2.3.7
 defusedxml~=0.7.1
 cffi~=1.15.1
-future~=0.18.3
+future~=1.0.0
 ipython~=8.10.0
 pip~=23.3.2
 panel~=0.14.3
@@ -56,3 +56,5 @@ pandas~=2.2.3
 faker~=18.11.2
 testfixtures~=8.1.0
 typing_extensions~=4.14.0
+
+# pip install https://github.com/calacademy-research/label_reconciliations.git@master

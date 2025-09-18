@@ -295,7 +295,7 @@ class ImageClient:
 
     # works for just basename +ext. "exact" does a sql "like" operation
 
-    def check_image_db_if_file_imported(self, collection, filename, search_type='path', exact=False):
+    def check_image_db_if_file_imported(self, collection, filename, search_type='filename', exact=False):
         params = {
             'file_string': quote(filename),
             'coll': collection,
@@ -303,6 +303,7 @@ class ImageClient:
             'search_type': search_type,
             'token': self.generate_token(quote(filename))
         }
+        print(params)
 
         return self.decode_response(params)
 

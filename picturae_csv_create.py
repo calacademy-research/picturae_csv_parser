@@ -18,8 +18,6 @@ from taxon_tools.BOT_TNRS import iterate_taxon_resolve
 from image_client import ImageClient
 starting_time_stamp = datetime.now()
 
-pd.set_option('future.no_silent_downcasting', True)
-
 class IncorrectTaxonError(Exception):
     pass
 

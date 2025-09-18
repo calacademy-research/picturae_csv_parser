@@ -12,6 +12,7 @@ import json
 import requests
 import argparse
 import math
+from label_reconciliations.core import run_on_dataframe, run_on_json
 
 class NfnCsvCreate():
     def __init__(self, coll, logging_level):
@@ -429,7 +430,7 @@ class NfnCsvCreate():
         }
         """
 
-        # 1) pull out only the finite coords
+        # pull out only the finite coords
         data = self.extract_coords_for_column_pair(
             coord_frame,
             f"lat_verbatim_{coord_num}",
@@ -438,8 +439,6 @@ class NfnCsvCreate():
         if not data:
             print("No valid coordinates for batch", coord_num)
             return None
-
-        # 2) build opts exactly as in R
         opts: dict[str, float | str] = {"mode": mode}
         if maxdist is not None:
             opts["maxdist"] = maxdist
@@ -491,6 +490,65 @@ class NfnCsvCreate():
 
             self.logger.info(f"Merged cleaned coordinates for lat_verbatim_{i} into master_csv.")
 
+
+
+    def infer_column_types(self, df: pd.DataFrame, group_by: str = "subject_id") -> list[str]:
+        """
+        Infer reconciliation column types for run_on_dataframe():
+          - Boolean-like columns -> 'select'
+          - Numeric/float columns -> 'same'
+          - Everything else -> 'text'
+        Skips group_by and metadata columns.
+        """
+        skip_cols = {group_by, "classification_id", "user_name"}
+        column_types = []
+
+        for col in df.columns:
+            if col in skip_cols:
+                continue
+
+            s = df[col].dropna()
+            if s.empty:
+                continue
+
+            # Check numeric/float
+            is_numeric = False
+            try:
+                pd.to_numeric(s, errors="raise")
+                is_numeric = True
+            except Exception:
+                is_numeric = False
+
+            if is_numeric:
+                ctype = "same"
+            else:
+                # Check for boolean-like values
+                unique_vals = set(s.astype(str).str.lower().unique())
+                if unique_vals <= {"true", "false"} or unique_vals <= {"yes", "no"} or unique_vals <= {"0", "1"}:
+                    ctype = "select"
+                else:
+                    ctype = "text"
+
+            column_types.append(f"{col}:{ctype}")
+
+        return column_types
+
+    def drop_redundant_cols(self):
+        """drops unneeded columns"""
+        pass
+
+    def reconcile_rows(self):
+        """calls reconciler to perform final row combination"""
+        column_types = self.infer_column_types(self.master_csv)
+
+        unrec_df, rec_df = run_on_dataframe(
+            self.master_csv,
+            column_types=column_types,
+            group_by="subject_id" if "subject_id" in self.master_csv.columns else self.master_csv.columns[0],
+            explanations=True,
+        )
+        return unrec_df, rec_df
+
     def run_all_methods(self):
         self.rename_columns()
         self.remove_records()
@@ -504,10 +562,24 @@ class NfnCsvCreate():
         self.clean_trs_utm_llm()
         self.clean_habitat_specimen_description_llm()
 
+
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
 
+        # potential method to bias the output
+        # self.bias_transcription()
+        self.drop_redundant_cols()
+
         self.master_csv.to_csv(
-            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_combined.csv",
+            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_unreconciled.csv",
+            sep=',',
+            quoting=csv.QUOTE_ALL,
+            index=False
+        )
+
+        unrec_csv, rec_csv = self.reconcile_rows_json()
+
+        rec_csv.to_csv(
+            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_reconciled.csv",
             sep=',',
             quoting=csv.QUOTE_ALL,
             index=False
