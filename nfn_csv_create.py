@@ -1,11 +1,11 @@
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
 import os
 from get_configs import get_config
 from sql_csv_utils import SqlCsvTools
 from string_utils import remove_non_numerics
 import numpy as np
 import csv
-import re
 import logging
 import json5
 import json
@@ -559,8 +559,8 @@ class NfnCsvCreate():
             self.master_csv.loc[self.row.name] = self.row
 
         self.clean_coords()
-        self.clean_trs_utm_llm()
-        self.clean_habitat_specimen_description_llm()
+        #self.clean_trs_utm_llm()
+        #self.clean_habitat_specimen_description_llm()
 
 
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
@@ -576,7 +576,7 @@ class NfnCsvCreate():
             index=False
         )
 
-        unrec_csv, rec_csv = self.reconcile_rows_json()
+        unrec_csv, rec_csv = self.reconcile_rows()
 
         rec_csv.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_reconciled.csv",
