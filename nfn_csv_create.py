@@ -588,13 +588,6 @@ class NfnCsvCreate():
 
         return column_types
 
-
-    def convert_back_to_json_blob(self):
-        """converts columns back to nfn style json classification.
-        The reconciler outputs its own formatted dataframe"""
-
-        pass
-
     def reconcile_rows(self):
         """calls reconciler to perform final row combination"""
         column_types = self.infer_column_types(self.master_csv)
