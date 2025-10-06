@@ -1,18 +1,19 @@
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
+from collections import defaultdict
 import os
 from get_configs import get_config
 from sql_csv_utils import SqlCsvTools
 from string_utils import remove_non_numerics
 import numpy as np
 import csv
-import re
 import logging
 import json5
 import json
 import requests
 import argparse
 import math
-from label_reconciliations.core import run_on_dataframe, run_on_json
+from label_reconciliations.core import run_on_dataframe
 
 class NfnCsvCreate():
     def __init__(self, coll, logging_level):
@@ -26,6 +27,8 @@ class NfnCsvCreate():
         self.index = None
 
         self.master_csv = self.read_and_concat_csvs()
+
+        self.unpack_json()
 
         self.datums = self.config.ACCEPTED_DATUMS
 
@@ -59,6 +62,58 @@ class NfnCsvCreate():
         )
         return master_csv
 
+    def parse_json_cell(self, cell):
+        """Splits JSON into columns, numbering only coordinate-related fields."""
+        items = json.loads(cell)
+        output = {}
+        counts = defaultdict(int)
+
+        coordinate_keywords = ["coordinate", "latitude", "longitude", "utm", "township", "range", "section",
+                               "datum", "quadrangle"]
+
+        for it in items:
+            label = (it.get("task_label") or it.get("task") or "").strip()
+            val = it.get("value", None)
+
+            if any(kw in label.lower() for kw in coordinate_keywords):
+                counts[label] += 1
+                key = f"{label}_{counts[label]}"
+            else:
+                key = label
+
+            output[key] = val
+
+        return output
+
+    def extract_value(self, cell, value):
+        """extracts a value from a json"""
+        d = json.loads(cell)
+        inner = next(iter(d.values()))
+        return inner.get(value, None)
+
+    def unpack_json(self):
+        """function used to unpack json blobs in standard nfn classification ouput"""
+
+        self.master_csv.drop(columns=["metadata"], inplace=True)
+
+        # expanding out the annotation fields into columns
+        expanded = self.master_csv["annotations"].apply(self.parse_json_cell)
+
+        expanded_df = pd.DataFrame(expanded.tolist())
+
+        self.master_csv = pd.concat([self.master_csv.drop(columns=["annotations"]), expanded_df], axis=1)
+
+        # extracting barcode field
+        for field_name in ["Barcode", "Country", "State", "County", "CollectorNumber"]:
+            self.master_csv[field_name] = self.master_csv["subject_data"].apply(lambda cell: self.extract_value(cell, field_name))
+
+        self.master_csv.drop(columns=["subject_data", "user_ip", "created_at", "gold_standard", "expert"], inplace=True)
+
+        # moving barcode to front of dataframe
+        cols = ["Barcode", "Country", "State", "County", "CollectorNumber"] + [col for col in self.master_csv.columns if col not in
+                                                            ["Barcode", "Country", "State", "County"]]
+
+        self.master_csv = self.master_csv[cols]
 
     def detect_unknown_values(self, string):
         if string.lower() in ['none', 'unknown', 'unkown', '', 'nan'] or pd.isna(string):
@@ -492,7 +547,7 @@ class NfnCsvCreate():
 
 
 
-    def infer_column_types(self, df: pd.DataFrame, group_by: str = "subject_id") -> list[str]:
+    def infer_column_types(self, df: pd.DataFrame, group_by: str = "subject_ids") -> list[str]:
         """
         Infer reconciliation column types for run_on_dataframe():
           - Boolean-like columns -> 'select'
@@ -500,12 +555,12 @@ class NfnCsvCreate():
           - Everything else -> 'text'
         Skips group_by and metadata columns.
         """
-        skip_cols = {group_by, "classification_id", "user_name"}
+        skip_cols = {group_by, "classification", "user_name"}
         column_types = []
 
         for col in df.columns:
             if col in skip_cols:
-                continue
+                 continue
 
             s = df[col].dropna()
             if s.empty:
@@ -533,10 +588,6 @@ class NfnCsvCreate():
 
         return column_types
 
-    def drop_redundant_cols(self):
-        """drops unneeded columns"""
-        pass
-
     def reconcile_rows(self):
         """calls reconciler to perform final row combination"""
         column_types = self.infer_column_types(self.master_csv)
@@ -544,8 +595,11 @@ class NfnCsvCreate():
         unrec_df, rec_df = run_on_dataframe(
             self.master_csv,
             column_types=column_types,
-            group_by="subject_id" if "subject_id" in self.master_csv.columns else self.master_csv.columns[0],
+            format_choice="csv",
+            group_by="subject_ids" if "subject_ids" in self.master_csv.columns else self.master_csv.columns[0],
             explanations=True,
+
+
         )
         return unrec_df, rec_df
 
@@ -567,7 +621,6 @@ class NfnCsvCreate():
 
         # potential method to bias the output
         # self.bias_transcription()
-        self.drop_redundant_cols()
 
         self.master_csv.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_unreconciled.csv",
@@ -576,7 +629,7 @@ class NfnCsvCreate():
             index=False
         )
 
-        unrec_csv, rec_csv = self.reconcile_rows_json()
+        unrec_csv, rec_csv = self.reconcile_rows()
 
         rec_csv.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_reconciled.csv",
