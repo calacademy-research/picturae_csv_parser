@@ -1,5 +1,6 @@
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
+from pathlib import Path
 from collections import defaultdict
 import os
 from get_configs import get_config
@@ -16,12 +17,14 @@ import math
 from label_reconciliations.core import run_on_dataframe
 
 class NfnCsvCreate():
-    def __init__(self, coll, logging_level):
+    def __init__(self, coll, input_file, logging_level):
 
         self.logger = logging.getLogger("NfnCreatePicturae")
         self.logger.setLevel(logging_level)
 
         self.config = get_config(coll)
+
+        self.input_file = input_file
 
         self.row = None
         self.index = None
@@ -51,15 +54,12 @@ class NfnCsvCreate():
         if not os.path.exists(csv_folder):
             raise FileNotFoundError(f"The folder {csv_folder} does not exist.")
 
-        csv_files = [os.path.join(csv_folder, f) for f in os.listdir(csv_folder)
-                     if f.endswith(".csv") and os.path.isfile(os.path.join(csv_folder, f))]
+        csv_file = os.path.join(csv_folder, self.input_file)
 
-        self.logger.info(f"Found {len(csv_files)} CSVs in {csv_folder}")
+        self.logger.info(f"Found {len(csv_file)} CSVs in {csv_folder}")
 
-        master_csv = pd.concat(
-            [pd.read_csv(csv, dtype=str, low_memory=False) for csv in csv_files],
-            ignore_index=True
-        )
+        master_csv = pd.read_csv(csv_file, dtype=str, low_memory=False)
+
         return master_csv
 
     def parse_json_cell(self, cell):
@@ -91,6 +91,21 @@ class NfnCsvCreate():
         inner = next(iter(d.values()))
         return inner.get(value, None)
 
+
+    def detect_is_empty(self, string) -> bool:
+        """method to detect if a string type variable contains none or none-like value.
+           Returns True and False
+        """
+        if string is None:
+            return True
+        try:
+            if isinstance(string, float) and math.isnan(string):
+                return True
+        except Exception:
+            pass
+        s = str(string).strip().lower()
+        return s in ("", "nan", "none", "null", 'unknown', 'unkown')
+
     def unpack_json(self):
         """function used to unpack json blobs in standard nfn classification ouput"""
 
@@ -115,11 +130,6 @@ class NfnCsvCreate():
 
         self.master_csv = self.master_csv[cols]
 
-    def detect_unknown_values(self, string):
-        if string.lower() in ['none', 'unknown', 'unkown', '', 'nan'] or pd.isna(string):
-            return True
-        else:
-            return False
 
     def rename_columns(self):
 
@@ -190,7 +200,7 @@ class NfnCsvCreate():
         elif min_elevation == max_elevation:
             max_elevation = ''
 
-        is_unknown = self.detect_unknown_values(elevation_unit)
+        is_unknown = self.detect_is_empty(elevation_unit)
 
         if not str(min_elevation).endswith("0") and is_unknown:
             min_elevation = ''
@@ -201,6 +211,12 @@ class NfnCsvCreate():
                 elevation_unit = 'ft'
             else:
                 elevation_unit = 'm'
+
+        # emptying out single digit entries
+        if len(min_elevation) <= 1 and not self.detect_is_empty(min_elevation):
+            min_elevation = ''
+            max_elevation = ''
+            elevation_unit = ''
 
         if elevation_unit and elevation_unit.lower() == "feet":
             elevation_unit = "ft"
@@ -222,14 +238,14 @@ class NfnCsvCreate():
             and standardizes empty entries into [No Accession].
         """
         acc_num = str(acc_num).strip()
-        if acc_num == "[No Accession]" or self.detect_unknown_values(acc_num) or acc_num == "":
+        if acc_num == "[No Accession]" or self.detect_is_empty(acc_num) or acc_num == "":
             acc_num = "[No Accession]"
         elif (len(remove_non_numerics(acc_num)) < len(acc_num)) or (len(remove_non_numerics(acc_num)) > 10):
             acc_num = ""
         return acc_num
 
     def regex_check_coord(self, coord: str, regex_pattern, max_num: int):
-        if coord and not self.detect_unknown_values(coord):
+        if coord and not self.detect_is_empty(coord):
             # If regex pattern is found anywhere within the coord
             match = regex_pattern.search(coord)
             if match:
@@ -245,16 +261,6 @@ class NfnCsvCreate():
         return coord
 
 
-    def is_blank(self, string) -> bool:
-        if string is None:
-            return True
-        try:
-            if isinstance(string, float) and math.isnan(string):
-                return True
-        except Exception:
-            pass
-        s = str(string).strip().lower()
-        return s in ("", "nan", "none", "null")
 
     def clean_trs_utm_llm(self):
         """Uses LLM to clean only rows with TRS and UTM coordinates.
@@ -302,7 +308,7 @@ class NfnCsvCreate():
                     "Datum": str(utm_datum),
                 }
 
-                if all(self.is_blank(value) for value in coord_payload.values()):
+                if all(self.detect_is_empty(value) for value in coord_payload.values()):
                     response = dict.fromkeys(coord_payload.keys(), "")
                 else:
                     response = self.send_to_llm(json.dumps(coord_payload), system_prompt=system_prompt)
@@ -312,9 +318,9 @@ class NfnCsvCreate():
                         self.logger.warning(f"Row {index}, coord set {i} - LLM failed: {response}")
                         response = coord_payload.copy()
 
-                    trs_blank = all(self.is_blank(response[f]) for f in ["Township", "Range", "Section"])
+                    trs_blank = all(self.detect_is_empty(response[f]) for f in ["Township", "Range", "Section"])
 
-                    utm_blank = all(self.is_blank(response[f]) for f in ["Utm_zone", "Utm_easting", "Utm_northing"])
+                    utm_blank = all(self.detect_is_empty(response[f]) for f in ["Utm_zone", "Utm_easting", "Utm_northing"])
 
                     if trs_blank:
                         response[f"Quadrangle"] = ""
@@ -545,45 +551,61 @@ class NfnCsvCreate():
 
             self.logger.info(f"Merged cleaned coordinates for lat_verbatim_{i} into master_csv.")
 
-
-
     def infer_column_types(self, df: pd.DataFrame, group_by: str = "subject_ids") -> list[str]:
         """
-        Infer reconciliation column types for run_on_dataframe():
-          - Boolean-like columns -> 'select'
-          - Numeric/float columns -> 'same'
-          - Everything else -> 'text'
-        Skips group_by and metadata columns.
+        Hardcoded column type assignments for run_on_dataframe().
+
+        Each entry is "column_name:column_type"
+        Types: 'same', 'select', 'text', 'noop', 'point'
         """
-        skip_cols = {group_by, "classification", "user_name"}
+        # Hardcode mapping here
+        column_assignment = {
+            "Barcode": "same",
+            "State": "same",
+            "County": "same",
+            "CollectorNumber": "same",
+            "classification_id": "text",
+            "user_name": "noop",
+            "user_id": "noop",
+            "workflow_name": "noop",
+            "workflow_version": "noop",
+            "subject_ids": "same",
+            "herbarium_code": "select",
+            "AltCatalogNumber": "text",
+            "workflow_id": "noop",
+            "Remarks": "text",
+            "Text1": "text",
+            "MinElevation": "text",
+            "MaxElevation": "text",
+            "OriginalElevationUnit": "select"
+        }
+
+        coordinate_fields = {
+            "coordinates_present": "select",
+            "Township": "text",
+            "Range": "text",
+            "Section": "text",
+            "Quadrangle": "text",
+            "Utm_zone": "text",
+            "Utm_easting": "text",
+            "Utm_northing": "text",
+            "utm_datum": "text",
+            "lat_verbatim": "text",
+            "long_verbatim": "text",
+            "lat_long_datum": "text"
+        }
+
+        for base_name, ctype in coordinate_fields.items():
+            for i in range(1, 4):
+                column_assignment[f"{base_name}_{i}"] = ctype
+
+
+        # Produce list in "col:type" format for run_on_dataframe
         column_types = []
-
         for col in df.columns:
-            if col in skip_cols:
-                 continue
-
-            s = df[col].dropna()
-            if s.empty:
+            if col == group_by:
                 continue
-
-            # Check numeric/float
-            is_numeric = False
-            try:
-                pd.to_numeric(s, errors="raise")
-                is_numeric = True
-            except Exception:
-                is_numeric = False
-
-            if is_numeric:
-                ctype = "same"
-            else:
-                # Check for boolean-like values
-                unique_vals = set(s.astype(str).str.lower().unique())
-                if unique_vals <= {"true", "false"} or unique_vals <= {"yes", "no"} or unique_vals <= {"0", "1"}:
-                    ctype = "select"
-                else:
-                    ctype = "text"
-
+            ctype = column_assignment.get(col, "text")  # default fallback
             column_types.append(f"{col}:{ctype}")
 
         return column_types
@@ -593,14 +615,12 @@ class NfnCsvCreate():
         column_types = self.infer_column_types(self.master_csv)
 
         unrec_df, rec_df = run_on_dataframe(
-            self.master_csv,
-            column_types=column_types,
-            format_choice="csv",
-            group_by="subject_ids" if "subject_ids" in self.master_csv.columns else self.master_csv.columns[0],
-            explanations=True,
-
-
-        )
+                            self.master_csv,
+                            column_types=column_types,
+                            format_choice="csv",
+                            group_by="subject_ids" if "subject_ids" in self.master_csv.columns else self.master_csv.columns[0],
+                            explanations=True,
+                            summary_path=self.summary_path)
         return unrec_df, rec_df
 
     def run_all_methods(self):
@@ -613,8 +633,8 @@ class NfnCsvCreate():
             self.master_csv.loc[self.row.name] = self.row
 
         self.clean_coords()
-        self.clean_trs_utm_llm()
-        self.clean_habitat_specimen_description_llm()
+        # self.clean_trs_utm_llm()
+        # self.clean_habitat_specimen_description_llm()
 
 
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
@@ -622,8 +642,12 @@ class NfnCsvCreate():
         # potential method to bias the output
         # self.bias_transcription()
 
+        output_base_name = os.path.splitext(os.path.basename(self.input_file))[0]
+
+        self.summary_path = f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_summary.html"
+
         self.master_csv.to_csv(
-            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_unreconciled.csv",
+            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_unreconciled.csv",
             sep=',',
             quoting=csv.QUOTE_ALL,
             index=False
@@ -632,11 +656,12 @@ class NfnCsvCreate():
         unrec_csv, rec_csv = self.reconcile_rows()
 
         rec_csv.to_csv(
-            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}final_nfn_reconciled.csv",
+            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_reconciled.csv",
             sep=',',
             quoting=csv.QUOTE_ALL,
             index=False
         )
+
 
 
 if __name__ == "__main__":
@@ -648,6 +673,10 @@ if __name__ == "__main__":
                         default=0,
                         dest='verbose',
                         action='count')
+
+    parser.add_argument("-i", "--input_file", nargs="?",
+                        default=None,
+                        help="name of nfn batch file")
 
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -661,5 +690,5 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
 
-    picturae_csv_instance = NfnCsvCreate(coll=args.collection, logging_level=args.log_level)
+    picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file= args.input_file, logging_level=args.log_level)
     picturae_csv_instance.run_all_methods()
