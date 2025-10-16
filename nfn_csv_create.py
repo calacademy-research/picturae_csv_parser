@@ -1,4 +1,5 @@
 import pandas as pd
+import time_utils
 from pandas.api.types import is_numeric_dtype
 from pathlib import Path
 from collections import defaultdict
@@ -40,6 +41,14 @@ class NfnCsvCreate():
         self.ollama_url = self.config.OLLAMA_URL
 
         self.nominatum_dict = {}
+
+        # writing out uncleaned df for testing purposes
+        self.master_csv.to_csv(
+            f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}uncleaned_nfn_{time_utils.get_pst_time_now()}.csv",
+            sep=',',
+            quoting=csv.QUOTE_ALL,
+            index=False
+        )
 
 
     def read_in_prompt(self, filepath):
@@ -131,6 +140,7 @@ class NfnCsvCreate():
         self.master_csv = self.master_csv[cols]
 
 
+
     def rename_columns(self):
 
         col_dict = self.config.NFN_COL_DICT
@@ -213,10 +223,13 @@ class NfnCsvCreate():
                 elevation_unit = 'm'
 
         # emptying out single digit entries
-        if len(min_elevation) <= 1 and not self.detect_is_empty(min_elevation):
+        if ((len(min_elevation) <= 1 and not self.detect_is_empty(min_elevation))
+                or len(min_elevation) > 5):
             min_elevation = ''
             max_elevation = ''
             elevation_unit = ''
+
+
 
         if elevation_unit and elevation_unit.lower() == "feet":
             elevation_unit = "ft"
@@ -260,93 +273,94 @@ class NfnCsvCreate():
             coord = ''
         return coord
 
-
-
     def clean_trs_utm_llm(self):
-        """Uses LLM to clean only rows with TRS and UTM coordinates.
-        Zeroes out Quadrangle when TRS is blank; zeroes out Datum when UTM is blank.
-        Robustly treats '', None, NaN, 'nan', 'NaN', 'None', 'null' as blank.
-        """
-
-        cleaned_rows = []
+        """TRS/UTM cleaning across the DataFrame for only rows with trs/utm present"""
         system_prompt = self.read_in_prompt(filepath="prompts/trs_utm_prompt.txt")
 
-        for index, row in self.master_csv.iterrows():
-            # count how many coord sets exist by Township_* columns
-            matches = sum(name.startswith("Township_") for name in self.master_csv.columns)
+        # Count max coord sets by column name pattern
+        max_sets = sum(name.startswith("Township_") for name in self.master_csv.columns)
+        if max_sets == 0:
+            self.logger.info("No Township_* columns found; skipping clean_trs_utm_llm()")
+            return
 
-            for i in range(1, matches + 1):
-                coord_presence_col = f"coordinates_present_{i}"
-                coord_type = str(row.get(coord_presence_col, "")).strip()
-
-                # Only process TRS or UTM
-                if coord_type not in [
-                    "Yes - TRS (Township Range Section)",
-                    "Yes - UTM (Universal Transverse Mercator)"
-                ]:
-                    continue
-
-                # Build input payload from current row
-                trs_township = row.get(f"Township_{i}", "")
-                trs_range = row.get(f"Range_{i}", "")
-                trs_section = row.get(f"Section_{i}", "")
-                trs_quadrangle = row.get(f"Quadrangle_{i}", "")
-
-                utm_zone = row.get(f"Utm_zone_{i}", "")
-                utm_easting = row.get(f"Utm_easting_{i}", "")
-                utm_northing = row.get(f"Utm_northing_{i}", "")
-                utm_datum = row.get(f"Utm_datum_{i}", "")
-
-                coord_payload = {
-                    "Township": str(trs_township),
-                    "Range": str(trs_range),
-                    "Section": str(trs_section),
-                    "Quadrangle": str(trs_quadrangle),
-                    "Utm_zone": str(utm_zone),
-                    "Utm_easting": str(utm_easting),
-                    "Utm_northing": str(utm_northing),
-                    "Datum": str(utm_datum),
-                }
-
-                if all(self.detect_is_empty(value) for value in coord_payload.values()):
-                    response = dict.fromkeys(coord_payload.keys(), "")
-                else:
-                    response = self.send_to_llm(json.dumps(coord_payload), system_prompt=system_prompt)
-
-                    # If LLM failed, still enforce the clearing rules
-                    if not isinstance(response, dict):
-                        self.logger.warning(f"Row {index}, coord set {i} - LLM failed: {response}")
-                        response = coord_payload.copy()
-
-                    trs_blank = all(self.detect_is_empty(response[f]) for f in ["Township", "Range", "Section"])
-
-                    utm_blank = all(self.detect_is_empty(response[f]) for f in ["Utm_zone", "Utm_easting", "Utm_northing"])
-
-                    if trs_blank:
-                        response[f"Quadrangle"] = ""
-                    if utm_blank:
-                        response[f"Datum"] = ""
-
-                    self.logger.info(f"Row {index}, coord set {i} - LLM returned: {response}")
-
-                # Write back to the row
-                key_mapping = {
-                    "Township": f"Township_{i}",
-                    "Range": f"Range_{i}",
-                    "Section": f"Section_{i}",
-                    "Quadrangle": f"Quadrangle_{i}",
-                    "Utm_zone": f"Utm_zone_{i}",
-                    "Utm_easting": f"Utm_easting_{i}",
-                    "Utm_northing": f"Utm_northing_{i}",
-                    "Datum": f"Utm_datum_{i}",
-                }
-                for llm_key, target_col in key_mapping.items():
-                    if llm_key in response:
-                        row[target_col] = response[llm_key]
-
-                cleaned_rows.append(row)
+        cleaned_rows = []
+        for _, row in self.master_csv.iterrows():
+            row_dict = row.to_dict()
+            row_dict = self._clean_trs_utm_row(row_dict, max_sets, system_prompt)
+            cleaned_rows.append(row_dict)
 
         self.master_csv = pd.DataFrame(cleaned_rows)
+
+    def _clean_trs_utm_row(self, row_dict: dict, max_sets: int, system_prompt: str) -> dict:
+        """
+        Clean TRS/UTM fields for a single row (dict).
+        - Calls LLM only when coordinates_present_i indicates TRS/UTM and payload not all blank
+        - Clears Quadrangle if TRS blank; clears Datum if UTM blank
+        - Returns the updated row dict
+        """
+        for i in range(1, max_sets + 1):
+            coord_presence_col = f"coordinates_present_{i}"
+            coord_type = str(row_dict.get(coord_presence_col, "")).strip()
+
+            is_trs = coord_type == "Yes - TRS (Township Range Section)"
+            is_utm = coord_type == "Yes - UTM (Universal Transverse Mercator)"
+            do_llm = is_trs or is_utm
+
+            payload = {
+                "Township": str(row_dict.get(f"Township_{i}", "")),
+                "Range": str(row_dict.get(f"Range_{i}", "")),
+                "Section": str(row_dict.get(f"Section_{i}", "")),
+                "Quadrangle": str(row_dict.get(f"Quadrangle_{i}", "")),
+                "Utm_zone": str(row_dict.get(f"Utm_zone_{i}", "")),
+                "Utm_easting": str(row_dict.get(f"Utm_easting_{i}", "")),
+                "Utm_northing": str(row_dict.get(f"Utm_northing_{i}", "")),
+                "Datum": str(row_dict.get(f"Utm_datum_{i}", "")),
+            }
+
+            all_blank = all(self.detect_is_empty(v) for v in payload.values())
+
+            # Run LLM if appropriate; otherwise keep as-is
+            if do_llm and not all_blank:
+                resp = self.send_to_llm(json.dumps(payload), system_prompt=system_prompt)
+                if not isinstance(resp, dict):
+                    self.logger.warning(f"coord set {i} - LLM failed: {resp}")
+                    resp = payload.copy()
+
+                self.logger.info(f"coord set {i} - LLM output: {resp}")
+            else:
+                resp = payload
+
+
+            # Normalize and apply clearing rules
+            township = resp.get("Township", "")
+            range_ = resp.get("Range", "")
+            section = resp.get("Section", "")
+            quadrangle = resp.get("Quadrangle", "")
+            utm_zone_r = resp.get("Utm_zone", "")
+            utm_easting_r = resp.get("Utm_easting", "")
+            utm_northing_r = resp.get("Utm_northing", "")
+            datum_r = resp.get("Datum", "")
+
+            trs_blank = all(self.detect_is_empty(x) for x in (township, range_, section))
+            utm_blank = all(self.detect_is_empty(x) for x in (utm_zone_r, utm_easting_r, utm_northing_r))
+
+            if trs_blank:
+                quadrangle = ""
+            if utm_blank:
+                datum_r = ""
+
+            # Write back
+            row_dict[f"Township_{i}"] = township
+            row_dict[f"Range_{i}"] = range_
+            row_dict[f"Section_{i}"] = section
+            row_dict[f"Quadrangle_{i}"] = quadrangle
+            row_dict[f"Utm_zone_{i}"] = utm_zone_r
+            row_dict[f"Utm_easting_{i}"] = utm_easting_r
+            row_dict[f"Utm_northing_{i}"] = utm_northing_r
+            row_dict[f"Utm_datum_{i}"] = datum_r
+
+        return row_dict
+
 
     def clean_habitat_specimen_description_llm(self):
         """Cleans and separates unstructured strings into habitat and specimen description using a llm api"""
@@ -633,14 +647,11 @@ class NfnCsvCreate():
             self.master_csv.loc[self.row.name] = self.row
 
         self.clean_coords()
-        # self.clean_trs_utm_llm()
+        self.clean_trs_utm_llm()
         # self.clean_habitat_specimen_description_llm()
 
 
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
-
-        # potential method to bias the output
-        # self.bias_transcription()
 
         output_base_name = os.path.splitext(os.path.basename(self.input_file))[0]
 
