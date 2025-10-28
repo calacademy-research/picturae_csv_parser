@@ -65,7 +65,7 @@ class NfnCsvCreate():
 
         csv_file = os.path.join(csv_folder, self.input_file)
 
-        self.logger.info(f"Found {len(csv_file)} CSVs in {csv_folder}")
+        self.logger.info(f"Found {self.input_file} CSV in {csv_folder}")
 
         master_csv = pd.read_csv(csv_file, dtype=str, low_memory=False)
 
@@ -624,6 +624,30 @@ class NfnCsvCreate():
 
         return column_types
 
+    def flag_only_one(self, col_list):
+
+        """
+         Flags rows True if, within each `group_col` group, *any* column in `col_list`
+         has exactly one filled value (non-NaN and not just whitespace).
+        """
+
+        if not col_list:
+            self.logger.warning("No columns supplied")
+            self.master_csv["only_one_entry"] = False
+            self.master_csv["only_one_entry_detail"] = ""
+            return self.master_csv
+
+        filled = {c: (self.master_csv[c].notna()) & (~self.master_csv[c].astype(str).str.strip().eq("")) for c in col_list}
+        filled_df = pd.DataFrame(filled, index=self.master_csv.index)
+
+        counts = filled_df.groupby(self.master_csv["Barcode"]).sum()
+        singleton_cols_per_group = counts.apply(lambda s: [c for c, v in s.items() if v == 1], axis=1)
+
+        self.master_csv["only_one_entry"] = self.master_csv["Barcode"].map(counts.eq(1).any(axis=1))
+
+        self.master_csv["only_one_entry_detail"] = self.master_csv["Barcode"].map(lambda g: ",".join(
+                                                   singleton_cols_per_group.get(g, [])))
+
     def reconcile_rows(self):
         """calls reconciler to perform final row combination"""
         column_types = self.infer_column_types(self.master_csv)
@@ -663,6 +687,8 @@ class NfnCsvCreate():
             quoting=csv.QUOTE_ALL,
             index=False
         )
+
+        self.flag_only_one(col_list=["MinElevation", "Township_1", "Utm_zone_1", "lat_verbatim_1"])
 
         unrec_csv, rec_csv = self.reconcile_rows()
 
