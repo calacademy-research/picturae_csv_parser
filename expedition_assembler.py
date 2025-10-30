@@ -62,6 +62,7 @@ class AssembleExpedition:
                     raise FileNotFoundError(f"Error: {e}")
             else:
                 pass
+        return batch_csv
 
     def gather_images(self):
         """Copies image paths and CSV manifest to new expedition folder on drive."""
@@ -75,7 +76,7 @@ class AssembleExpedition:
         self.expedition_csv['jpg_path'] = (self.expedition_csv['CsvBatch'] + f"{self.sep}resized_jpg" +
                                            f"{self.sep}" + self.expedition_csv['jpg_path'])
 
-        self.duplicate_resized_images(batch_csv=self.expedition_csv)
+        self.expedition_csv = self.duplicate_resized_images(batch_csv=self.expedition_csv)
 
         dest_folder = os.path.join(self.destination_path, self.expedition_name)
         image_folder = os.path.join(dest_folder, 'images')
@@ -94,7 +95,7 @@ class AssembleExpedition:
         csv_path = os.path.join(dest_folder, self.csv_name)
 
         # Copying over CSV manifest last
-        shutil.copy(os.path.join('nfn_csv', self.csv_name), csv_path)
+        self.expedition_csv.to_csv(csv_path, index=False)
 
     def run_with_restarts(self):
         """Runs resizer using multiprocessing and will restart process on non-zero exit code to account for
