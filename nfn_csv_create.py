@@ -1,7 +1,5 @@
 import pandas as pd
 import time_utils
-from pandas.api.types import is_numeric_dtype
-from pathlib import Path
 from collections import defaultdict
 import os
 from get_configs import get_config
@@ -16,6 +14,9 @@ import requests
 import argparse
 import math
 from label_reconciliations.core import run_on_dataframe
+from coordinate_parser.parser import parse_coordinate
+
+# https://pypi.org/project/coordinate-parser/
 
 class NfnCsvCreate():
     def __init__(self, coll, input_file, logging_level):
@@ -456,14 +457,37 @@ class NfnCsvCreate():
         # Check if any part in fullname matches name_matched (case-insensitive)
         return any(f.lower() == n.lower() for f in fullname_parts for n in name_matched_parts)
 
+
+
+    def _safe_parse_coord(self, coord_string, coord_type):
+        try:
+            val = parse_coordinate(str(coord_string), coord_type=coord_type)  # your single-component parser
+            return float(val) if val is not None else math.nan
+        except Exception:
+            return math.nan
+
     def filter_lat_long_frame(self):
-        """Only keeps lat/long columns from processing if they exist."""
+        """Only keeps lat/long columns from processing if they exist. Creates numer_columns"""
         columns = [
             'lat_verbatim_1', 'long_verbatim_1',
             'lat_verbatim_2', 'long_verbatim_2',
             'lat_verbatim_3', 'long_verbatim_3',
         ]
         existing_columns = [col for col in columns if col in self.master_csv.columns]
+
+        # build numeric counterparts for any discovered pair index i
+        for i in (1, 2, 3):
+            lat_v = f'lat_verbatim_{i}'
+            lon_v = f'long_verbatim_{i}'
+            if lat_v in self.master_csv.columns:
+                self.master_csv[f'lat_numeric_{i}'] = self.master_csv[lat_v].apply(
+                    lambda x: self._safe_parse_coord(x, coord_type="latitude"))
+                existing_columns.append(f'lat_numeric_{i}')
+            if lon_v in self.master_csv.columns:
+                self.master_csv[f'long_numeric_{i}'] = self.master_csv[lon_v].apply(
+                    lambda x: self._safe_parse_coord(x, coord_type="longitude"))
+                existing_columns.append(f'long_numeric_{i}')
+
         return self.master_csv[existing_columns].copy()
 
     def extract_coords_for_column_pair(self, coord_frame, lat_col, lon_col):
@@ -498,18 +522,17 @@ class NfnCsvCreate():
             maxdistrel: float | None = 0.1
     ) -> pd.DataFrame | None:
         """
-        Batch‑queries the GVS API by building a payload of the form:
+        Batch-queries the GVS API by building a payload of the form:
         {
           "opts": { "mode": "...", "maxdist": ..., "maxdistrel": ... },
           "data": [ [lat1, lon1], [lat2, lon2], … ]
         }
         """
 
-        # pull out only the finite coords
         data = self.extract_coords_for_column_pair(
             coord_frame,
-            f"lat_verbatim_{coord_num}",
-            f"long_verbatim_{coord_num}"
+            f"lat_numeric_{coord_num}",
+            f"long_numeric_{coord_num}"
         )
         if not data:
             print("No valid coordinates for batch", coord_num)
@@ -532,7 +555,6 @@ class NfnCsvCreate():
         }
 
         try:
-            # 3) POST the JSON exactly as R does
             resp = requests.post(api_url, headers=headers, data=json.dumps(payload))
             resp.raise_for_status()
             return pd.DataFrame(resp.json())
@@ -548,6 +570,9 @@ class NfnCsvCreate():
 
         for i in range(1, matches + 1):
             df = self.batch_query_gvs(coord_num=i, coord_frame=coord_frame)
+
+            print("test_print_gvs")
+            print(df)
 
             if df is None or df.empty:
                 self.logger.warning(f"No valid results for lat_verbatim_{i}")
@@ -577,6 +602,7 @@ class NfnCsvCreate():
             "Barcode": "same",
             "State": "same",
             "County": "same",
+            "Country": "same",
             "CollectorNumber": "same",
             "classification_id": "text",
             "user_name": "noop",
@@ -671,7 +697,7 @@ class NfnCsvCreate():
             self.master_csv.loc[self.row.name] = self.row
 
         self.clean_coords()
-        self.clean_trs_utm_llm()
+        # self.clean_trs_utm_llm()
         # self.clean_habitat_specimen_description_llm()
 
 
@@ -727,5 +753,5 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
 
-    picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file= args.input_file, logging_level=args.log_level)
+    picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file=args.input_file, logging_level=args.log_level)
     picturae_csv_instance.run_all_methods()

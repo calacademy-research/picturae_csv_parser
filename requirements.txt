@@ -13,7 +13,7 @@ Paste==3.4.4
 pipreqs==0.4.13
 pluggy~=1.5.0
 pyparsing~=3.0.9
-pytest~=8.3.3
+pytest~=8.4.2
 pytz~=2024.2
 requests==2.32.4
 sh~=2.0.4
@@ -52,9 +52,10 @@ numpy~=2.1
 brotli~=1.0.9
 chardet~=4.0.0
 zipp~=3.23.0
-pandas~=2.2.3
+pandas~=2.3.2
 faker~=18.11.2
 testfixtures~=8.1.0
 typing_extensions~=4.14.0
+coordinate-parser~=0.1.1
 
 # pip install https://github.com/calacademy-research/label_reconciliations.git@master
