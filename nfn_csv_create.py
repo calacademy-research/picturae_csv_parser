@@ -1,7 +1,5 @@
 import pandas as pd
 import time_utils
-from pandas.api.types import is_numeric_dtype
-from pathlib import Path
 from collections import defaultdict
 import os
 from get_configs import get_config
@@ -16,9 +14,12 @@ import requests
 import argparse
 import math
 from label_reconciliations.core import run_on_dataframe
+from coordinate_parser.parser import parse_coordinate
+
+# https://pypi.org/project/coordinate-parser/
 
 class NfnCsvCreate():
-    def __init__(self, coll, input_file, logging_level):
+    def __init__(self, coll, input_file, logging_level, hemisphere):
 
         self.logger = logging.getLogger("NfnCreatePicturae")
         self.logger.setLevel(logging_level)
@@ -39,6 +40,8 @@ class NfnCsvCreate():
         self.sql_csv_tools = SqlCsvTools(config=self.config)
 
         self.ollama_url = self.config.OLLAMA_URL
+
+        self.hemisphere = hemisphere
 
         self.nominatum_dict = {}
 
@@ -456,14 +459,103 @@ class NfnCsvCreate():
         # Check if any part in fullname matches name_matched (case-insensitive)
         return any(f.lower() == n.lower() for f in fullname_parts for n in name_matched_parts)
 
+    def _safe_parse_coord(self, coord_string, coord_type, hemisphere="NorthWest"):
+        """
+        coord_type: 'lat' or 'lon'
+        hemisphere: one of NorthWest, NorthEast, SouthWest, SouthEast (default = NorthWest)
+        """
+        try:
+            val = parse_coordinate(str(coord_string), coord_type=coord_type)
+            if val is None:
+                return math.nan
+
+            val = float(val)
+            s = str(coord_string).strip().upper()
+
+            HEMISPHERE_DEFAULTS = {
+                "NorthWest": ("N", "W"),
+                "NorthEast": ("N", "E"),
+                "SouthWest": ("S", "W"),
+                "SouthEast": ("S", "E"),
+            }
+
+            lat_default, lon_default = HEMISPHERE_DEFAULTS.get(
+                hemisphere, ("N", "W")
+            )
+
+            if coord_type.lower() in ("lat", "latitude"):
+                if "S" in s:
+                    return -abs(val)
+                elif "N" in s:
+                    return abs(val)
+                else:
+                    return abs(val) if lat_default == "N" else -abs(val)
+
+            elif coord_type.lower() in ("lon", "long", "longitude"):
+                # Explicit E/W in the string takes precedence
+                if "W" in s:
+                    return -abs(val)
+                elif "E" in s:
+                    return abs(val)
+                else:
+                    return -abs(val) if lon_default == "W" else abs(val)
+            return math.nan
+
+        except Exception:
+            return math.nan
+
+    def flag_failed_numeric_conversion(self, row, matches):
+        """flags rows where not all the verbatim lat longs converted succesfully to
+           numeric lat longs for manual review
+        """
+        verb_count = 0
+        num_count = 0
+
+        if matches <= 0:
+            return False
+
+        for i in range(1, matches + 1):
+            for col in (f"lat_verbatim_{i}", f"long_verbatim_{i}"):
+                if col in row.index and not self.detect_is_empty(row[col]):
+                    verb_count += 1
+
+            for col in (f"lat_numeric_{i}", f"long_numeric_{i}"):
+                if col in row.index and not self.detect_is_empty(row[col]):
+                    num_count += 1
+
+        if verb_count == 0:
+            return False
+
+        # Flag when counts don't match
+        return verb_count != num_count
+
+
+
     def filter_lat_long_frame(self):
-        """Only keeps lat/long columns from processing if they exist."""
+        """Only keeps lat/long columns from processing if they exist. Creates numeric_columns"""
         columns = [
             'lat_verbatim_1', 'long_verbatim_1',
             'lat_verbatim_2', 'long_verbatim_2',
             'lat_verbatim_3', 'long_verbatim_3',
         ]
+
         existing_columns = [col for col in columns if col in self.master_csv.columns]
+
+        matches = len(existing_columns) // 2
+
+        # build numeric counterparts for any discovered pair index i
+        for i in range(1, matches + 1):
+            lat_v = f'lat_verbatim_{i}'
+            lon_v = f'long_verbatim_{i}'
+            if lat_v in self.master_csv.columns:
+                self.master_csv[f'lat_numeric_{i}'] = self.master_csv[lat_v].apply(
+                    lambda x: self._safe_parse_coord(x, coord_type="latitude"))
+                existing_columns.append(f'lat_numeric_{i}')
+            if lon_v in self.master_csv.columns:
+                self.master_csv[f'long_numeric_{i}'] = self.master_csv[lon_v].apply(
+                    lambda x: self._safe_parse_coord(x, coord_type="longitude"))
+                existing_columns.append(f'long_numeric_{i}')
+
         return self.master_csv[existing_columns].copy()
 
     def extract_coords_for_column_pair(self, coord_frame, lat_col, lon_col):
@@ -498,21 +590,20 @@ class NfnCsvCreate():
             maxdistrel: float | None = 0.1
     ) -> pd.DataFrame | None:
         """
-        Batch‑queries the GVS API by building a payload of the form:
+        Batch-queries the GVS API by building a payload of the form:
         {
           "opts": { "mode": "...", "maxdist": ..., "maxdistrel": ... },
           "data": [ [lat1, lon1], [lat2, lon2], … ]
         }
         """
 
-        # pull out only the finite coords
         data = self.extract_coords_for_column_pair(
             coord_frame,
-            f"lat_verbatim_{coord_num}",
-            f"long_verbatim_{coord_num}"
+            f"lat_numeric_{coord_num}",
+            f"long_numeric_{coord_num}"
         )
         if not data:
-            print("No valid coordinates for batch", coord_num)
+            logging.info(f"No valid coordinates for batch: {coord_num}")
             return None
         opts: dict[str, float | str] = {"mode": mode}
         if maxdist is not None:
@@ -532,18 +623,18 @@ class NfnCsvCreate():
         }
 
         try:
-            # 3) POST the JSON exactly as R does
             resp = requests.post(api_url, headers=headers, data=json.dumps(payload))
             resp.raise_for_status()
             return pd.DataFrame(resp.json())
 
         except requests.exceptions.RequestException as e:
-            print(f"An error occurred: {e}")
+            logging.info(f"An error occurred: {e}")
             return None
 
     def clean_coords(self):
         """Loops through each lat_verbatim_X column and prints the GVS results."""
         coord_frame = self.filter_lat_long_frame()
+
         matches = sum(name.startswith("lat_verbatim_") for name in coord_frame.columns)
 
         for i in range(1, matches + 1):
@@ -557,6 +648,10 @@ class NfnCsvCreate():
 
             coord_frame_subset = coord_frame[[f"lat_verbatim_{i}", f"long_verbatim_{i}"]].reset_index()
 
+            df.rename(columns={'county': 'assigned_county'}, inplace=True)
+
+            df = df[['assigned_county', 'latlong_err']]
+
             merged = pd.concat([coord_frame_subset, df], axis=1)
 
             for col in df.columns:
@@ -564,6 +659,11 @@ class NfnCsvCreate():
                 self.master_csv.loc[merged["index"], cleaned_col] = merged[col].values
 
             self.logger.info(f"Merged cleaned coordinates for lat_verbatim_{i} into master_csv.")
+
+        self.master_csv["failed_conversion"] = self.master_csv.apply(
+            lambda row: self.flag_failed_numeric_conversion(row, matches),
+            axis=1
+        )
 
     def infer_column_types(self, df: pd.DataFrame, group_by: str = "subject_ids") -> list[str]:
         """
@@ -577,6 +677,7 @@ class NfnCsvCreate():
             "Barcode": "same",
             "State": "same",
             "County": "same",
+            "Country": "same",
             "CollectorNumber": "same",
             "classification_id": "text",
             "user_name": "noop",
@@ -606,6 +707,8 @@ class NfnCsvCreate():
             "utm_datum": "text",
             "lat_verbatim": "text",
             "long_verbatim": "text",
+            "lat_numeric": "text",
+            "long_numeric": "text",
             "lat_long_datum": "text"
         }
 
@@ -672,7 +775,7 @@ class NfnCsvCreate():
 
         self.clean_coords()
         self.clean_trs_utm_llm()
-        # self.clean_habitat_specimen_description_llm()
+        self.clean_habitat_specimen_description_llm()
 
 
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
@@ -723,9 +826,16 @@ if __name__ == "__main__":
                         default="Botany_PIC", choices=["Botany_PIC", "iz", "ich"],
                         help="Collection type (default: %(default)s)")
 
+    parser.add_argument('-hm', '--hemisphere', nargs="?",
+                        default="NorthWest", choices=['NorthWest', 'NorthEast', 'SouthWest', 'SouthEast'],
+                        help="the hemisphere quadrant the dataset is covering, to standardize +, - numeric lat/longs"
+                        )
+
+
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
 
-    picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file= args.input_file, logging_level=args.log_level)
+    picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file=args.input_file, logging_level=args.log_level,
+                                         hemisphere=args.hemisphere)
     picturae_csv_instance.run_all_methods()
