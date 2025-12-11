@@ -754,14 +754,18 @@ class NfnCsvCreate():
     def reconcile_rows(self):
         """calls reconciler to perform final row combination"""
         column_types = self.infer_column_types(self.master_csv)
-
         unrec_df, rec_df = run_on_dataframe(
                             self.master_csv,
                             column_types=column_types,
                             format_choice="csv",
                             group_by="subject_ids" if "subject_ids" in self.master_csv.columns else self.master_csv.columns[0],
                             explanations=True,
-                            summary_path=self.summary_path)
+                            summary_path=self.summary_path
+                            )
+
+        # remove suffix from reconciler
+        rec_df.columns = rec_df.columns.str.replace(r'(_\d+)$', '', regex=True)
+
         return unrec_df, rec_df
 
     def run_all_methods(self):
@@ -783,6 +787,8 @@ class NfnCsvCreate():
         output_base_name = os.path.splitext(os.path.basename(self.input_file))[0]
 
         self.summary_path = f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_summary.html"
+
+        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1', ])
 
         self.master_csv.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_unreconciled.csv",
