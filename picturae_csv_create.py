@@ -264,21 +264,32 @@ class CsvCreatePicturae:
 
         self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
         self.record_full.fillna(np.nan, inplace=True)
-        self.record_full.rename(columns={"NOTES_x": "cover_notes", "NOTES_y": "sheet_notes"}, inplace=True)
+        self.record_full.rename(columns={"NOTES_x": "cover_notes",
+                                         "NOTES_y": "sheet_notes"}, inplace=True)
 
+        # Barcodes present in specimen CSV but not matched in merged CSV
         spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
 
-        # checking for specimen barcodes not matched to folder barcode
         if spec_difference:
-            spec_difference = list(spec_difference)
-            spec_difference.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
 
-            filtered_spec_csv = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
-            csv_batch_unmatch = filtered_spec_csv['CSV-BATCH'].unique()
+            # Sort numerically where possible
+            spec_difference = sorted(spec_difference, key=lambda x: int(x) if x.isdigit() else float('inf'))
 
-            raise ValueError(f"In the following batches {sorted(set(csv_batch_unmatch))}, the"
-                             f" following barcodes not matched to a folder {sorted(set(spec_difference))}")
+            # Filter rows that correspond to unmatched barcodes
+            filtered = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
 
+            # --- Build mapping: CSV-BATCH → List of unmatched barcodes ---
+            batch_map = (
+                filtered.groupby("CSV-BATCH")["SPECIMEN-BARCODE"]
+                .apply(list)
+                .to_dict()
+            )
+
+            # Optionally sort the barcode lists
+            for k in batch_map:
+                batch_map[k] = sorted(batch_map[k], key=lambda x: int(x) if x.isdigit() else float("inf"))
+
+            raise ValueError({"unmatched_barcodes": batch_map})
 
     def remove_duplicate_barcodes(self):
         """Removing and saving rows with improperly marked duplicate records for further visual QC"""
@@ -384,12 +395,12 @@ class CsvCreatePicturae:
         self.record_full = self.record_full.reindex(columns=col_order_list)
 
         # comment out before committing, code to create simple manifests
-        # self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
+        #self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
         #
         self.record_full.rename(columns=col_dict, inplace=True)
 
-        # self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
-        #                         quoting=csv.QUOTE_NONNUMERIC, index=False)
+        #self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
+        #                        quoting=csv.QUOTE_NONNUMERIC, index=False)
         #
         # self.logger.info("merged csv written")
 
@@ -973,25 +984,24 @@ class CsvCreatePicturae:
         self.csv_colnames()
         # cleaning data
         self.col_clean()
-
-        # check taxa against db
+        # # check taxa against db
         self.check_taxa_against_database()
-
-        # running taxa through TNRS
+        #
+        # # running taxa through TNRS
         self.taxon_check_tnrs()
-
-        # checking if barcode record present in database
+        #
+        # # checking if barcode record present in database
         self.barcode_has_record()
-
-        # checking if barcode has valid image file
+        #
+        #  checking if barcode has valid image file
         self.check_if_images_present()
-
-        # checking if image has record
+        #
+        # # checking if image has record
         self.image_has_record()
-        # checking if barcode has valid file name for barcode
+        # # checking if barcode has valid file name for barcode
         self.check_barcode_match()
-
-        # writing csv for inspection and upload
+        #
+        # # writing csv for inspection and upload
         self.write_upload_csv()
 
 

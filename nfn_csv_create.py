@@ -788,7 +788,23 @@ class NfnCsvCreate():
 
         self.summary_path = f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_summary.html"
 
-        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1', ])
+        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1', ""])
+
+        # normalizing column names to match db fields for update
+
+        self.master_csv.rename(columns={"herbarium_code": "Modifier", "cleaned_habitat": "Habitat",
+                                        "lat_verbatim_1": "LatText1", "long_verbatim_1": "LongText1",
+                                        "lat_verbatim_2": "LatText2", "long_verbatim_2": "LongText2",
+                                        "lat_numeric_1": "Latitude1", "long_numeric_1": "Longitude1",
+                                        "lat_numeric_2": "Latitude2", "long_numeric_2": "Longitude2",
+                                        "lat_long_datum_1": "Datum",
+                                        "MinElevation": "MinElevation", "MaxElevation": "MaxElevation",
+                                        "OriginalElevationUnit": "OriginalElevationUnit",
+                                        "Utm_northing_1": "UtmNorthing", "Utm_easting_1": "UtmEasting",
+                                        "Utm_datum_1": "UtmDatum", "Utm_zone_1": "UtmZone",
+                                        "Township_1": "Township", "Range_1": "RangeDesc", "Section_1": "Section",
+                                        "Quadrangle_1": "BaseMeridian"
+                                        })
 
         self.master_csv.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_unreconciled.csv",
@@ -797,7 +813,7 @@ class NfnCsvCreate():
             index=False
         )
 
-        self.flag_only_one(col_list=["MinElevation", "Township_1", "Utm_zone_1", "lat_verbatim_1"])
+        self.flag_only_one(col_list=["MinElevation", "Township", "UtmZone", "LatText1"])
 
         unrec_csv, rec_csv = self.reconcile_rows()
 
