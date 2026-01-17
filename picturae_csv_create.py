@@ -984,24 +984,19 @@ class CsvCreatePicturae:
         self.csv_colnames()
         # cleaning data
         self.col_clean()
-        # # check taxa against db
+        #  check taxa against db
         self.check_taxa_against_database()
-        #
-        # # running taxa through TNRS
+        #  running taxa through TNRS
         self.taxon_check_tnrs()
-        #
-        # # checking if barcode record present in database
+        # checking if barcode record present in database
         self.barcode_has_record()
-        #
         #  checking if barcode has valid image file
         self.check_if_images_present()
-        #
-        # # checking if image has record
+        # checking if image has record
         self.image_has_record()
-        # # checking if barcode has valid file name for barcode
+        # checking if barcode has valid file name for barcode
         self.check_barcode_match()
-        #
-        # # writing csv for inspection and upload
+        # writing csv for inspection and upload
         self.write_upload_csv()
 
 
