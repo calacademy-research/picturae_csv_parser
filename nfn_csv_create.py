@@ -16,6 +16,7 @@ import math
 from label_reconciliations.core import run_on_dataframe
 from coordinate_parser.parser import parse_coordinate
 
+
 # https://pypi.org/project/coordinate-parser/
 
 class NfnCsvCreate():
@@ -52,7 +53,6 @@ class NfnCsvCreate():
             quoting=csv.QUOTE_ALL,
             index=False
         )
-
 
     def read_in_prompt(self, filepath):
         """reads in prompts from .txt files"""
@@ -103,7 +103,6 @@ class NfnCsvCreate():
         inner = next(iter(d.values()))
         return inner.get(value, None)
 
-
     def detect_is_empty(self, string) -> bool:
         """method to detect if a string type variable contains none or none-like value.
            Returns True and False
@@ -132,17 +131,20 @@ class NfnCsvCreate():
 
         # extracting barcode field
         for field_name in ["Barcode", "Country", "State", "County", "CollectorNumber"]:
-            self.master_csv[field_name] = self.master_csv["subject_data"].apply(lambda cell: self.extract_value(cell, field_name))
+            self.master_csv[field_name] = self.master_csv["subject_data"].apply(
+                lambda cell: self.extract_value(cell, field_name))
 
-        self.master_csv.drop(columns=["subject_data", "user_ip", "created_at", "gold_standard", "expert"], inplace=True)
+        self.master_csv.drop(columns=["subject_data", "user_ip", "created_at", "gold_standard", "expert"],
+                             inplace=True)
 
         # moving barcode to front of dataframe
-        cols = ["Barcode", "Country", "State", "County", "CollectorNumber"] + [col for col in self.master_csv.columns if col not in
-                                                            ["Barcode", "Country", "State", "County"]]
+        cols = ["Barcode", "Country", "State", "County", "CollectorNumber"] + [col for col in
+                                                                               self.master_csv.columns if
+                                                                               col not in
+                                                                               ["Barcode", "Country", "State",
+                                                                                "County"]]
 
         self.master_csv = self.master_csv[cols]
-
-
 
     def rename_columns(self):
 
@@ -174,7 +176,8 @@ class NfnCsvCreate():
 
         self.master_csv = self.master_csv[~self.master_csv['user_name'].isin(blacklist)].reset_index(drop=True)
         # Removing multimount double transcription records
-        self.master_csv['AltCatalogNumber'] = self.master_csv['AltCatalogNumber'].apply(self.clean_herb_accession)
+        self.master_csv['AltCatalogNumber'] = self.master_csv['AltCatalogNumber'].apply(
+            self.clean_herb_accession)
 
         self.master_csv = self.master_csv[self.master_csv['AltCatalogNumber'] != '']
 
@@ -231,8 +234,6 @@ class NfnCsvCreate():
             min_elevation = ''
             max_elevation = ''
             elevation_unit = ''
-
-
 
         if elevation_unit and elevation_unit.lower() == "feet":
             elevation_unit = "ft"
@@ -333,7 +334,6 @@ class NfnCsvCreate():
             else:
                 resp = payload
 
-
             # Normalize and apply clearing rules
             township = resp.get("Township", "")
             range_ = resp.get("Range", "")
@@ -363,7 +363,6 @@ class NfnCsvCreate():
             row_dict[f"Utm_datum_{i}"] = datum_r
 
         return row_dict
-
 
     def clean_habitat_specimen_description_llm(self):
         """Cleans and separates unstructured strings into habitat and specimen description using a llm api"""
@@ -398,7 +397,6 @@ class NfnCsvCreate():
 
         self.master_csv['cleaned_habitat'] = cleaned_habitats
         self.master_csv['cleaned_spec_desc'] = cleaned_specimen_desc
-
 
     def send_to_llm(self, user_input, system_prompt):
         """building block function which posts the llm api request, assumes default llama3:70b"""
@@ -451,7 +449,6 @@ class NfnCsvCreate():
             self.logger.error(f"Could not clean/parse JSON5 from text: {raw_text}")
             self.logger.error(f"Parsing error detail: {e}")
             return "Error"
-
 
     def has_matching_substring(self, row, column1, column2):
         fullname_parts = str(row[column1]).split()  # Split fullname into parts
@@ -528,8 +525,6 @@ class NfnCsvCreate():
 
         # Flag when counts don't match
         return verb_count != num_count
-
-
 
     def filter_lat_long_frame(self):
         """Only keeps lat/long columns from processing if they exist. Creates numeric_columns"""
@@ -716,7 +711,6 @@ class NfnCsvCreate():
             for i in range(1, 4):
                 column_assignment[f"{base_name}_{i}"] = ctype
 
-
         # Produce list in "col:type" format for run_on_dataframe
         column_types = []
         for col in df.columns:
@@ -740,7 +734,8 @@ class NfnCsvCreate():
             self.master_csv["only_one_entry_detail"] = ""
             return self.master_csv
 
-        filled = {c: (self.master_csv[c].notna()) & (~self.master_csv[c].astype(str).str.strip().eq("")) for c in col_list}
+        filled = {c: (self.master_csv[c].notna()) & (~self.master_csv[c].astype(str).str.strip().eq("")) for c
+                  in col_list}
         filled_df = pd.DataFrame(filled, index=self.master_csv.index)
 
         counts = filled_df.groupby(self.master_csv["Barcode"]).sum()
@@ -749,19 +744,40 @@ class NfnCsvCreate():
         self.master_csv["only_one_entry"] = self.master_csv["Barcode"].map(counts.eq(1).any(axis=1))
 
         self.master_csv["only_one_entry_detail"] = self.master_csv["Barcode"].map(lambda g: ",".join(
-                                                   singleton_cols_per_group.get(g, [])))
+            singleton_cols_per_group.get(g, [])))
+
+    def multiple_coord(self, row) -> bool:
+        """
+        Returns True if any of Township_2, Utm_northing_2, or lat_verbatim_2 are filled
+        (i.e., exist and are not empty/none-like), such that manual checks can be applied
+        """
+
+        def get_val(key: str):
+            try:
+                return row.get(key, None)
+            except Exception:
+                try:
+                    return row[key]
+                except Exception:
+                    return None
+
+        for col in ("Township_2", "Utm_northing_2", "lat_verbatim_2"):
+            val = get_val(col)
+            if not self.detect_is_empty(val):
+                return True
+        return False
 
     def reconcile_rows(self):
         """calls reconciler to perform final row combination"""
         column_types = self.infer_column_types(self.master_csv)
         unrec_df, rec_df = run_on_dataframe(
-                            self.master_csv,
-                            column_types=column_types,
-                            format_choice="csv",
-                            group_by="subject_ids" if "subject_ids" in self.master_csv.columns else self.master_csv.columns[0],
-                            explanations=True,
-                            summary_path=self.summary_path
-                            )
+            self.master_csv,
+            column_types=column_types,
+            format_choice="csv",
+            group_by="subject_ids" if "subject_ids" in self.master_csv.columns else self.master_csv.columns[0],
+            explanations=True,
+            summary_path=self.summary_path
+        )
 
         # remove suffix from reconciler
         rec_df.columns = rec_df.columns.str.replace(r'(_\d+)$', '', regex=True)
@@ -781,14 +797,30 @@ class NfnCsvCreate():
         self.clean_trs_utm_llm()
         self.clean_habitat_specimen_description_llm()
 
-
         os.makedirs(f"nfn_csv{os.path.sep}nfn_csv_output", exist_ok=True)
 
         output_base_name = os.path.splitext(os.path.basename(self.input_file))[0]
 
         self.summary_path = f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_summary.html"
 
-        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1', ])
+        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1', ""])
+
+        # normalizing column names to match db fields for update
+
+        self.master_csv.rename(columns={"herbarium_code": "Modifier", "cleaned_habitat": "Habitat",
+                                        "lat_verbatim_1": "LatText1", "long_verbatim_1": "LongText1",
+                                        "lat_verbatim_2": "LatText2", "long_verbatim_2": "LongText2",
+                                        "lat_numeric_1": "Latitude1", "long_numeric_1": "Longitude1",
+                                        "lat_numeric_2": "Latitude2", "long_numeric_2": "Longitude2",
+                                        "lat_long_datum_1": "Datum",
+                                        "MinElevation": "MinElevation", "MaxElevation": "MaxElevation",
+                                        "OriginalElevationUnit": "OriginalElevationUnit",
+                                        "Utm_northing_1": "UtmNorthing", "Utm_easting_1": "UtmEasting",
+                                        "Utm_datum_1": "UtmDatum", "Utm_zone_1": "UtmZone",
+                                        "Township_1": "Township", "Range_1": "RangeDesc",
+                                        "Section_1": "Section",
+                                        "Quadrangle_1": "BaseMeridian"
+                                        })
 
         self.master_csv.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_unreconciled.csv",
@@ -797,7 +829,9 @@ class NfnCsvCreate():
             index=False
         )
 
-        self.flag_only_one(col_list=["MinElevation", "Township_1", "Utm_zone_1", "lat_verbatim_1"])
+        self.flag_only_one(col_list=["MinElevation", "Township", "UtmZone", "LatText1"])
+
+        self.master_csv["multiple_coord_2"] = self.master_csv.apply(self.multiple_coord, axis=1)
 
         unrec_csv, rec_csv = self.reconcile_rows()
 
@@ -807,7 +841,6 @@ class NfnCsvCreate():
             quoting=csv.QUOTE_ALL,
             index=False
         )
-
 
 
 if __name__ == "__main__":
@@ -837,11 +870,12 @@ if __name__ == "__main__":
                         help="the hemisphere quadrant the dataset is covering, to standardize +, - numeric lat/longs"
                         )
 
-
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
 
-    picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file=args.input_file, logging_level=args.log_level,
+    picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file=args.input_file,
+                                         logging_level=args.log_level,
                                          hemisphere=args.hemisphere)
     picturae_csv_instance.run_all_methods()
+
