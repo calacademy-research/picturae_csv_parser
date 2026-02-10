@@ -31,6 +31,14 @@ def remove_non_numerics(string: str):
     return re.sub('[^0-9]+', '', string)
 
 
+def extract_barcodes_from_notes(s: str, min_len: int = 7):
+    """detects runs of digits to detect barcodes, so they are adjacent"""
+    if s is None:
+        return []
+    s = str(s)
+    return re.findall(rf"(?<!\d)\d{{{min_len},}}(?!\d)", s)
+
+
 def replace_apostrophes(string: str):
     """
     Replaces single apostrophes with double apostrophes for MySQL compatibility,

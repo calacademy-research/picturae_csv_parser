@@ -26,7 +26,7 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level):
+    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, min_digits=7):
         self.tnrs_ignore = str_to_bool(tnrs_ignore)
         self.covered_ignore = str_to_bool(covered_ignore)
         self.picturae_config = config
@@ -34,7 +34,7 @@ class CsvCreatePicturae:
         self.image_client = ImageClient(config=self.picturae_config)
         self.logger = logging.getLogger("CsvCreatePicturae")
         self.logger.setLevel(logging_level)
-
+        self.min_digits = min_digits
         self.init_all_vars()
 
         self.run_all()
@@ -59,6 +59,8 @@ class CsvCreatePicturae:
 
         self.sheet_list = []
 
+        self.manifest_list = []
+
         self.path_prefix = self.picturae_config.PREFIX
 
         self.dir_path = self.picturae_config.DATA_FOLDER + "csv_batch"
@@ -69,6 +71,7 @@ class CsvCreatePicturae:
 
         self.sql_csv_tools = SqlCsvTools(config=self.picturae_config, logging_level=self.logger.getEffectiveLevel())
 
+        self.manifest_cols = ['TYPE', 'FOLDER-BARCODE', 'SPECIMEN-BARCODE', 'FAMILY', 'BARCODE_2', "TIMESTAMP", "PATH"]
 
         # intializing parameters for database upload
         init_list = ['taxon_id', 'barcode',
@@ -100,16 +103,21 @@ class CsvCreatePicturae:
 
                 sheet_count = 0
                 cover_count = 0
+                manifest_count = 0
 
                 for root, dirs, files in os.walk(self.dir_path):
                     for file in files:
                         file_string = file.lower()
-                        if "sheet_cp1" in file_string:
+                        if "sheet" in file_string:
                             sheet_count += 1
                             self.sheet_list.append(file)
-                        elif "cover_cp1" in file_string:
+                        elif "cover" in file_string:
                             cover_count += 1
                             self.cover_list.append(file)
+
+                        elif "batch" in file_string:
+                            manifest_count += 1
+                            self.manifest_list.append(file)
                         else:
                             self.logger.info(f"csv {file} file does not fit format , skipping")
                 if sheet_count != cover_count:
@@ -131,14 +139,36 @@ class CsvCreatePicturae:
             data_list = self.cover_list
         elif csv_level == "SHEET":
             data_list = self.sheet_list
+        elif csv_level == "MANIFEST":
+            data_list = self.manifest_list
         else:
-            raise ValueError("Invalid csv_level value. It must be 'COVER' or 'SHEET'.")
+            raise ValueError("Invalid csv_level value. It must be 'COVER' or 'SHEET'. or 'MANIFEST'")
 
         for csv_path in data_list:
             csv_path = self.dir_path + f"{os.path.sep}" + csv_path
-            df = read_csv_file(csv_path)
-            if " " in df.columns[0]:
-                df = standardize_headers(df)
+
+            if csv_level == "MANIFEST":
+                df = pd.read_csv(csv_path, header=None, names=self.manifest_cols)
+                df = df[["SPECIMEN-BARCODE", "FOLDER-BARCODE"]]
+            else:
+                df = pd.read_csv(csv_path)
+                if " " in str(df.columns[0]):
+                    df = standardize_headers(df)
+                if csv_level == "SHEET":
+                    df["IMAGE-FILENAME"] = (
+                        df["IMAGE-FILENAME"]
+                        .astype(str)
+                        .str.replace(r"\D+", "", regex=True)
+                    )
+                    df.rename(columns={"IMAGE-FILENAME": "SPECIMEN-BARCODE"}, inplace=True)
+                if csv_level == "COVER":
+                    df["IMAGE-FILENAME"] = (
+                        df["IMAGE-FILENAME"]
+                        .astype(str)
+                        .str.replace(r"\.jpg$", "", regex=True)  # only at end
+                    )
+                    df.rename(columns={"Image Filename": "FOLDER-BARCODE"}, inplace=True)
+
             dataframes.append(df)
 
         combined_csv = pd.concat(dataframes, ignore_index=True)
@@ -153,25 +183,15 @@ class CsvCreatePicturae:
         """csv_merge_and_clean:
                 reads, merges and data wrangles the set of folder and specimen csvs
         """
-        fold_csv, spec_csv = self.read_folder_and_specimen_csvs()
+        fold_csv, spec_csv, manifest_csv = self.read_folder_and_specimen_csvs()
 
         spec_csv = self.fill_duplicate_barcodes(spec_csv=spec_csv)
 
-        self.merge_folder_and_specimen_csvs(fold_csv, spec_csv)
+        self.merge_folder_and_specimen_csvs(fold_csv, spec_csv, manifest_csv)
 
         self.remove_duplicate_barcodes()
 
-
-    def drop_common_columns(self, csv: pd.DataFrame, folder=False):
-        """drops columns duplicate between sheet and cover csvs"""
-
-        drop_list = ['APPLICATION-ID', 'OBJECT-TYPE', 'APPLICATION-BATCH', 'FEEDBACK-ALEMBO', 'FEEDBACK-CALIFORNIA']
-        if folder is True:
-            drop_list = drop_list + ['SPECIMEN-BARCODE', 'PATH-JPG', 'CSV-BATCH']
-
-        csv.drop(columns=drop_list, inplace=True)
-
-        return csv
+        print(self.record_full.head(10))
 
     def read_folder_and_specimen_csvs(self):
         """read the folder and specimen CSVs into the environment.
@@ -180,41 +200,55 @@ class CsvCreatePicturae:
         """
         fold_csv = self.csv_read_path(csv_level="COVER")
         spec_csv = self.csv_read_path(csv_level="SHEET")
+        manifest_csv = self.csv_read_path(csv_level="MANIFEST")
 
-        # Set the folder barcode column to match the specimen barcode
-        fold_csv['FOLDER-BARCODE'] = fold_csv['SPECIMEN-BARCODE']
+        fold_csv.drop(columns=["DDD-BATCH-NAME"], inplace=True)
 
-        self.drop_common_columns(fold_csv, folder=True)
-        self.drop_common_columns(spec_csv)
+        manifest_csv = manifest_csv[~manifest_csv["SPECIMEN-BARCODE"].astype(str).str.contains("Cover", na=False)]
 
-        difference = set(fold_csv['FOLDER-BARCODE']) - set(spec_csv['FOLDER-BARCODE'])
-
-        if len(difference) > 0:
-            self.logger.warning(f"Following folder barcodes not in specimen csv {difference}")
-
-        return fold_csv, spec_csv
-
+        return fold_csv, spec_csv, manifest_csv
 
     def fill_duplicate_barcodes(self, spec_csv):
-        """Populate barcode and Parent barcode based on duplicate records in notes section.
-           args:
-                spec_csv: the specimen level dataframe
-        """
-        spec_csv['SPECIMEN-BARCODE'] = spec_csv['SPECIMEN-BARCODE'].apply(remove_barcode_suffix)
 
-        is_duplicate = spec_csv['NOTES'].astype(str).str.contains(r'\d', regex=True)
-        spec_csv['DUPLICATE'] = is_duplicate
-        spec_csv['PARENT-BARCODE'] = ''
+        # 7 or more digits
+        barcode_pat = r"(?<!\d)\d{7,}(?!\d)"
 
-        spec_csv.loc[is_duplicate, 'PARENT-BARCODE'] = spec_csv.loc[is_duplicate, 'SPECIMEN-BARCODE']
-        spec_csv.loc[is_duplicate, 'SPECIMEN-BARCODE'] = spec_csv.loc[
-            is_duplicate, 'NOTES'].apply(remove_non_numerics)
+        # Only treat as "duplicate" if NOTES contains a barcode-like number
+        is_duplicate = spec_csv["NOTES"].astype(str).str.contains(barcode_pat, regex=True, na=False)
 
-        spec_csv = fill_missing_folder_barcodes(df=spec_csv, spec_bar="SPECIMEN-BARCODE",
-                                                fold_bar='FOLDER-BARCODE', parent_bar="PARENT-BARCODE")
+        spec_csv["DUPLICATE"] = is_duplicate
+        spec_csv["PARENT-BARCODE"] = ""
+
+        # Determine if original barcode followed the underscore suffix protocol
+        orig_bar = spec_csv["SPECIMEN-BARCODE"].astype(str)
+        had_underscore_suffix = orig_bar.str.contains(r"_\d+$", regex=True, na=False)
+
+        spec_csv["SPECIMEN-BARCODE"] = spec_csv["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
+
+        # Set parent barcode for duplicates
+        spec_csv.loc[is_duplicate, "PARENT-BARCODE"] = spec_csv.loc[is_duplicate, "SPECIMEN-BARCODE"]
+
+        notes_dup = spec_csv.loc[is_duplicate, "NOTES"].astype(str)
+        candidates = notes_dup.apply(lambda s: extract_barcodes_from_notes(s, min_len=7))
+
+        # Only overwrite when protocol was used AND notes has exactly one plausible barcode
+        overwrite_mask = is_duplicate & had_underscore_suffix
+        overwrite_idx = spec_csv.index[overwrite_mask]
+
+        # Keep only those with exactly one candidate
+        one_candidate = candidates.apply(len).eq(1)
+        overwrite_idx = overwrite_idx.intersection(one_candidate[one_candidate].index)
+
+        spec_csv.loc[overwrite_idx, "SPECIMEN-BARCODE"] = candidates.loc[overwrite_idx].apply(lambda xs: xs[0]).values
+
+        spec_csv = fill_missing_folder_barcodes(
+            df=spec_csv,
+            spec_bar="SPECIMEN-BARCODE",
+            fold_bar="FOLDER-BARCODE",
+            parent_bar="PARENT-BARCODE",
+        )
 
         spec_csv = self.update_duplicate_notes(spec_csv=spec_csv)
-
         return spec_csv
 
     def update_duplicate_notes(self, spec_csv):
@@ -255,20 +289,23 @@ class CsvCreatePicturae:
         return spec_csv
 
 
-    def merge_folder_and_specimen_csvs(self, fold_csv, spec_csv):
+    def merge_folder_and_specimen_csvs(self, fold_csv, spec_csv, manifest_csv):
         """define self.record_full, Merge the folder and specimen CSVs and fill missing values.
             args:
                 fold_csv: the folder level csv
                 spec_csv: the specimen level csv
         """
-
-        self.record_full = pd.merge(fold_csv, spec_csv, on="FOLDER-BARCODE")
+        matched_csv = pd.merge(spec_csv, manifest_csv, on="SPECIMEN-BARCODE")
+        self.record_full = pd.merge(fold_csv, matched_csv, on="FOLDER-BARCODE")
         self.record_full.fillna(np.nan, inplace=True)
         self.record_full.rename(columns={"NOTES_x": "cover_notes",
                                          "NOTES_y": "sheet_notes"}, inplace=True)
 
         # Barcodes present in specimen CSV but not matched in merged CSV
         spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
+
+        fold_difference = set(fold_csv['FOLDER-BARCODE']) - set(spec_csv['FOLDER-BARCODE'])
+
 
         if spec_difference:
 
@@ -280,7 +317,7 @@ class CsvCreatePicturae:
 
             # --- Build mapping: CSV-BATCH → List of unmatched barcodes ---
             batch_map = (
-                filtered.groupby("CSV-BATCH")["SPECIMEN-BARCODE"]
+                filtered.groupby("Picturae Batch Name")["SPECIMEN-BARCODE"]
                 .apply(list)
                 .to_dict()
             )
@@ -290,6 +327,10 @@ class CsvCreatePicturae:
                 batch_map[k] = sorted(batch_map[k], key=lambda x: int(x) if x.isdigit() else float("inf"))
 
             raise ValueError({"unmatched_barcodes": batch_map})
+
+        if fold_difference:
+            self.logger.warning(f"Following folder barcodes not in specimen csv {fold_difference}")
+
 
     def remove_duplicate_barcodes(self):
         """Removing and saving rows with improperly marked duplicate records for further visual QC"""
@@ -301,7 +342,7 @@ class CsvCreatePicturae:
 
         # where specimen barcode is duplicated, but collector-number is NOT duplicated.
         unmarked_dupes = duplicates[
-            duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'COLLECTOR-NUMBER'], keep=False) == False]
+            duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'Collector Number'], keep=False) == False]
 
         unmarked_all = self.record_full[
             self.record_full['SPECIMEN-BARCODE'].isin(unmarked_dupes['SPECIMEN-BARCODE'])]
@@ -311,7 +352,7 @@ class CsvCreatePicturae:
         self.record_full = self.record_full.drop_duplicates()
 
         # getting range of csv dates and writing unmarked duplicates to csv
-        batch_date_list = self.record_full['CSV-BATCH'].apply(extract_digits, args=(8,))
+        batch_date_list = self.record_full['Picturae Batch Name'].apply(extract_digits, args=(8,))
 
         # re-assigning date_use to a range of dates
         self.date_range = f"{batch_date_list.min()}_{batch_date_list.max()}"
@@ -1023,6 +1064,10 @@ if __name__ == "__main__":
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: %(default)s)")
+
+    parser.add_argument("-m", "--min_digits", nargs="?", required=False, help="number of min digits for a barcode, "
+                                                                              "useful for setting a threshold"
+                                                                              " for duplicates in the notes section")
 
     args = parser.parse_args()
 
