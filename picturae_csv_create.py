@@ -148,10 +148,10 @@ class CsvCreatePicturae:
             csv_path = self.dir_path + f"{os.path.sep}" + csv_path
 
             if csv_level == "MANIFEST":
-                df = pd.read_csv(csv_path, header=None, names=self.manifest_cols)
+                df = pd.read_csv(csv_path, header=None, names=self.manifest_cols, dtype=str, keep_default_na=False)
                 df = df[["SPECIMEN-BARCODE", "FOLDER-BARCODE"]]
             else:
-                df = pd.read_csv(csv_path)
+                df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
                 if " " in str(df.columns[0]):
                     df = standardize_headers(df)
                 if csv_level == "SHEET":
@@ -167,7 +167,7 @@ class CsvCreatePicturae:
                         .astype(str)
                         .str.replace(r"\.jpg$", "", regex=True)  # only at end
                     )
-                    df.rename(columns={"Image Filename": "FOLDER-BARCODE"}, inplace=True)
+                    df.rename(columns={"IMAGE-FILENAME": "FOLDER-BARCODE"}, inplace=True)
 
             dataframes.append(df)
 
@@ -185,9 +185,9 @@ class CsvCreatePicturae:
         """
         fold_csv, spec_csv, manifest_csv = self.read_folder_and_specimen_csvs()
 
-        spec_csv = self.fill_duplicate_barcodes(spec_csv=spec_csv)
-
         self.merge_folder_and_specimen_csvs(fold_csv, spec_csv, manifest_csv)
+
+        self.fill_duplicate_barcodes()
 
         self.remove_duplicate_barcodes()
 
@@ -202,54 +202,56 @@ class CsvCreatePicturae:
         spec_csv = self.csv_read_path(csv_level="SHEET")
         manifest_csv = self.csv_read_path(csv_level="MANIFEST")
 
-        fold_csv.drop(columns=["DDD-BATCH-NAME"], inplace=True)
+        fold_csv.drop(columns=["DDD-BATCH-NAME", "PICTURAE-BATCH-NAME"], inplace=True)
 
         manifest_csv = manifest_csv[~manifest_csv["SPECIMEN-BARCODE"].astype(str).str.contains("Cover", na=False)]
 
         return fold_csv, spec_csv, manifest_csv
 
-    def fill_duplicate_barcodes(self, spec_csv):
+    def fill_duplicate_barcodes(self):
+
+        print(self.record_full.columns)
 
         # 7 or more digits
         barcode_pat = r"(?<!\d)\d{7,}(?!\d)"
 
         # Only treat as "duplicate" if NOTES contains a barcode-like number
-        is_duplicate = spec_csv["NOTES"].astype(str).str.contains(barcode_pat, regex=True, na=False)
 
-        spec_csv["DUPLICATE"] = is_duplicate
-        spec_csv["PARENT-BARCODE"] = ""
+        is_duplicate = self.record_full["sheet_notes"].astype(str).str.contains(barcode_pat, regex=True, na=False)
+
+        self.record_full["DUPLICATE"] = is_duplicate
+        self.record_full["PARENT-BARCODE"] = ""
 
         # Determine if original barcode followed the underscore suffix protocol
-        orig_bar = spec_csv["SPECIMEN-BARCODE"].astype(str)
+        orig_bar = self.record_full["SPECIMEN-BARCODE"].astype(str)
         had_underscore_suffix = orig_bar.str.contains(r"_\d+$", regex=True, na=False)
 
-        spec_csv["SPECIMEN-BARCODE"] = spec_csv["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
+        self.record_full["SPECIMEN-BARCODE"] = self.record_full["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
 
         # Set parent barcode for duplicates
-        spec_csv.loc[is_duplicate, "PARENT-BARCODE"] = spec_csv.loc[is_duplicate, "SPECIMEN-BARCODE"]
+        self.record_full.loc[is_duplicate, "PARENT-BARCODE"] = self.record_full.loc[is_duplicate, "SPECIMEN-BARCODE"]
 
-        notes_dup = spec_csv.loc[is_duplicate, "NOTES"].astype(str)
+        notes_dup = self.record_full.loc[is_duplicate, "sheet_notes"].astype(str)
         candidates = notes_dup.apply(lambda s: extract_barcodes_from_notes(s, min_len=7))
 
         # Only overwrite when protocol was used AND notes has exactly one plausible barcode
         overwrite_mask = is_duplicate & had_underscore_suffix
-        overwrite_idx = spec_csv.index[overwrite_mask]
+        overwrite_idx = self.record_full.index[overwrite_mask]
 
         # Keep only those with exactly one candidate
         one_candidate = candidates.apply(len).eq(1)
         overwrite_idx = overwrite_idx.intersection(one_candidate[one_candidate].index)
 
-        spec_csv.loc[overwrite_idx, "SPECIMEN-BARCODE"] = candidates.loc[overwrite_idx].apply(lambda xs: xs[0]).values
+        self.record_full.loc[overwrite_idx, "SPECIMEN-BARCODE"] = candidates.loc[overwrite_idx].apply(lambda xs: xs[0]).values
 
-        spec_csv = fill_missing_folder_barcodes(
-            df=spec_csv,
+        self.record_full = fill_missing_folder_barcodes(
+            df=self.record_full,
             spec_bar="SPECIMEN-BARCODE",
             fold_bar="FOLDER-BARCODE",
             parent_bar="PARENT-BARCODE",
         )
 
-        spec_csv = self.update_duplicate_notes(spec_csv=spec_csv)
-        return spec_csv
+        self.record_full = self.update_duplicate_notes(spec_csv=self.record_full)
 
     def update_duplicate_notes(self, spec_csv):
         """Creates grouped list of barcodes that share the same parent barcode and applies to the notes section"""
@@ -282,7 +284,7 @@ class CsvCreatePicturae:
 
                     note_message = f"Multi-mount of {total_barcodes} barcodes. See also {joined_barcodes}."
 
-                    spec_csv.loc[spec_csv['SPECIMEN-BARCODE'] == barcode, 'NOTES'] = note_message
+                    spec_csv.loc[spec_csv['SPECIMEN-BARCODE'] == barcode, 'sheet_notes'] = note_message
 
             else:
                 pass
@@ -304,7 +306,7 @@ class CsvCreatePicturae:
         # Barcodes present in specimen CSV but not matched in merged CSV
         spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
 
-        fold_difference = set(fold_csv['FOLDER-BARCODE']) - set(spec_csv['FOLDER-BARCODE'])
+        fold_difference = set(self.record_full['SPECIMEN-BARCODE']) - set(manifest_csv['FOLDER-BARCODE'])
 
 
         if spec_difference:
@@ -317,7 +319,7 @@ class CsvCreatePicturae:
 
             # --- Build mapping: CSV-BATCH → List of unmatched barcodes ---
             batch_map = (
-                filtered.groupby("Picturae Batch Name")["SPECIMEN-BARCODE"]
+                filtered.groupby("PICTURAE-BATCH-NAME")["SPECIMEN-BARCODE"]
                 .apply(list)
                 .to_dict()
             )
@@ -352,7 +354,7 @@ class CsvCreatePicturae:
         self.record_full = self.record_full.drop_duplicates()
 
         # getting range of csv dates and writing unmarked duplicates to csv
-        batch_date_list = self.record_full['Picturae Batch Name'].apply(extract_digits, args=(8,))
+        batch_date_list = self.record_full['PICTURAE-BATCH-NAME'].apply(extract_digits, args=(8,))
 
         # re-assigning date_use to a range of dates
         self.date_range = f"{batch_date_list.min()}_{batch_date_list.max()}"
@@ -1022,23 +1024,23 @@ class CsvCreatePicturae:
         # merging and cleaning csv files
         self.csv_merge_and_clean()
         # renaming columns
-        self.csv_colnames()
-        # cleaning data
-        self.col_clean()
-        #  check taxa against db
-        self.check_taxa_against_database()
-        #  running taxa through TNRS
-        self.taxon_check_tnrs()
-        # checking if barcode record present in database
-        self.barcode_has_record()
-        #  checking if barcode has valid image file
-        self.check_if_images_present()
-        # checking if image has record
-        self.image_has_record()
-        # checking if barcode has valid file name for barcode
-        self.check_barcode_match()
-        # writing csv for inspection and upload
-        self.write_upload_csv()
+        # self.csv_colnames()
+        # # cleaning data
+        # self.col_clean()
+        # #  check taxa against db
+        # self.check_taxa_against_database()
+        # #  running taxa through TNRS
+        # self.taxon_check_tnrs()
+        # # checking if barcode record present in database
+        # self.barcode_has_record()
+        # #  checking if barcode has valid image file
+        # self.check_if_images_present()
+        # # checking if image has record
+        # self.image_has_record()
+        # # checking if barcode has valid file name for barcode
+        # self.check_barcode_match()
+        # # writing csv for inspection and upload
+        # self.write_upload_csv()
 
 
 #
