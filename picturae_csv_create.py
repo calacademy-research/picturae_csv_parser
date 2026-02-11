@@ -191,7 +191,6 @@ class CsvCreatePicturae:
 
         self.remove_duplicate_barcodes()
 
-        print(self.record_full.head(10))
 
     def read_folder_and_specimen_csvs(self):
         """read the folder and specimen CSVs into the environment.
@@ -209,8 +208,6 @@ class CsvCreatePicturae:
         return fold_csv, spec_csv, manifest_csv
 
     def fill_duplicate_barcodes(self):
-
-        print(self.record_full.columns)
 
         # 7 or more digits
         barcode_pat = r"(?<!\d)\d{7,}(?!\d)"
@@ -306,7 +303,7 @@ class CsvCreatePicturae:
         # Barcodes present in specimen CSV but not matched in merged CSV
         spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
 
-        fold_difference = set(self.record_full['SPECIMEN-BARCODE']) - set(manifest_csv['FOLDER-BARCODE'])
+        fold_difference = set(self.record_full['FOLDER-BARCODE']) - set(manifest_csv['FOLDER-BARCODE'])
 
 
         if spec_difference:
@@ -375,13 +372,13 @@ class CsvCreatePicturae:
                 none"""
 
         col_dict = {
-                     'CSV-BATCH': 'CSV_batch',
+                     'PICTURAE-BATCH-NAME': 'CSV_batch',
                      'FOLDER-BARCODE': 'folder_barcode',
                      'SPECIMEN-BARCODE': 'CatalogNumber',
+                     'ACCESSION - NUMBER - (CAS)(DS)': 'herb_code',
+                     'ACCESSION-NUMBER': 'accession_number',
                      'PARENT-BARCODE': 'parent_CatalogNumber',
-                     'PATH-JPG': 'image_path',
-                     'LABEL-IS-MOSTLY-HANDWRITTEN': 'mostly_handwritten',
-                     'TAXON-ID': 'taxon_id',
+                     'TAXON_ID': 'taxon_id',
                      'FAMILY': 'Family',
                      'GENUS': 'Genus',
                      'SPECIES': 'Species',
@@ -394,40 +391,56 @@ class CsvCreatePicturae:
                      'HYBRID': 'Hybrid',
                      'AUTHOR': 'Author',
                      'COLLECTOR-NUMBER': 'collector_number',
-                     'COLLECTOR-ID-1': 'agent_id1',
-                     'COLLECTOR-FIRST-NAME-1': 'collector_first_name1',
-                     'COLLECTOR-MIDDLE-NAME-1': 'collector_middle_name1',
-                     'COLLECTOR-LAST-NAME-1': 'collector_last_name1',
-                     'COLLECTOR-ID-2': 'agent_id2',
-                     'COLLECTOR-FIRST-NAME-2': 'collector_first_name2',
-                     'COLLECTOR-MIDDLE-NAME-2': 'collector_middle_name2',
-                     'COLLECTOR-LAST-NAME-2': 'collector_last_name2',
-                     'COLLECTOR-ID-3': 'agent_id3',
-                     'COLLECTOR-FIRST-NAME-3': 'collector_first_name3',
-                     'COLLECTOR-MIDDLE-NAME-3': 'collector_middle_name3',
-                     'COLLECTOR-LAST-NAME-3': 'collector_last_name3',
-                     'COLLECTOR-ID-4': 'agent_id4',
-                     'COLLECTOR-FIRST-NAME-4': 'collector_first_name4',
-                     'COLLECTOR-MIDDLE-NAME-4': 'collector_middle_name4',
-                     'COLLECTOR-LAST-NAME-4': 'collector_last_name4',
-                     'COLLECTOR-ID-5': 'agent_id5',
-                     'COLLECTOR-FIRST-NAME-5': 'collector_first_name5',
-                     'COLLECTOR-MIDDLE-NAME-5': 'collector_middle_name5',
-                     'COLLECTOR-LAST-NAME-5': 'collector_last_name5',
+                     'COLLECTOR-ID-(1)': 'agent_id1',
+                     'COLLECTOR-FIRST-NAME-(1)': 'collector_first_name1',
+                     'COLLECTOR-MIDDLE-NAME-(1)': 'collector_middle_name1',
+                     'COLLECTOR-LAST-NAME-(1)': 'collector_last_name1',
+                     'COLLECTOR-ID-(2)': 'agent_id2',
+                     'COLLECTOR-FIRST-NAME-(2)': 'collector_first_name2',
+                     'COLLECTOR-MIDDLE-NAME-(2)': 'collector_middle_name2',
+                     'COLLECTOR-LAST-NAME-(2)': 'collector_last_name2',
+                     'COLLECTOR-ID-(3)': 'agent_id3',
+                     'COLLECTOR-FIRST-NAME-(3)': 'collector_first_name3',
+                     'COLLECTOR-MIDDLE-NAME-(3)': 'collector_middle_name3',
+                     'COLLECTOR-LAST-NAME-(3)': 'collector_last_name3',
+                     'COLLECTOR-ID-(4)': 'agent_id4',
+                     'COLLECTOR-FIRST-NAME-(4)': 'collector_first_name4',
+                     'COLLECTOR-MIDDLE-NAME-(4)': 'collector_middle_name4',
+                     'COLLECTOR-LAST-NAME-(4)': 'collector_last_name4',
+                     'COLLECTOR-ID-(5)': 'agent_id5',
+                     'COLLECTOR-FIRST-NAME-(5)': 'collector_first_name5',
+                     'COLLECTOR-MIDDLE-NAME-(5)': 'collector_middle_name5',
+                     'COLLECTOR-LAST-NAME-(5)': 'collector_last_name5',
+                     'COLLECTOR-ID-(6)': 'agent_id6',
+                     'COLLECTOR-FIRST-NAME-(6)': 'collector_first_name6',
+                     'COLLECTOR-MIDDLE-NAME-(6)': 'collector_middle_name6',
+                     'COLLECTOR-LAST-NAME-(6)': 'collector_last_name6', ''
                      'LOCALITY-ID': 'locality_id',
                      'COUNTRY': 'Country',
-                     'STATE-LOCALITY': 'State',
+                     'STATE': 'State',
                      'COUNTY': 'County',
-                     'PRECISE-LOCALITY': 'locality',
+                     'PRECISE_LOCALITY': 'locality',
+                     'LATITUDE': 'latitude',
+                     'LONGITUDE': 'longitude',
+                     'DATUM': 'datum',
+                     'COORDINATE-FORMAT-(DMS)-(DM)-(DD)-(UNKNOWN)': 'coordinate_format',
+                     'NORTHING': 'northing',
+                     'EASTING': 'easting',
+                     'ZONE': 'zone',
+                     'MINIMUM-ELEVATION': 'min_elevation',
+                     'MAXIMUM-ELEVATION': 'max_elevation',
+                     'ELEVATION-UNITS-(FT-OR-M)': 'elevation_unit',
+                     'SPECIMEN - DESCRIPTION': 'specimen_desc',
+                     'HABITAT-+-ASSOCIATED-SPECIES': 'habitat',
                      'VERBATIM-DATE': 'verbatim_date',
-                     'START-DATE-MONTH': 'start_date_month',
-                     'START-DATE-DAY': 'start_date_day',
-                     'START-DATE-YEAR': 'start_date_year',
-                     'END-DATE-MONTH': 'end_date_month',
-                     'END-DATE-DAY': 'end_date_day',
-                     'END-DATE-YEAR': 'end_date_year',
+                     'START-DATE-MONTH-(MM)': 'start_date_month',
+                     'START-DATE-DAY-(DD)': 'start_date_day',
+                     'START-DATE-YEAR-(YYYY)': 'start_date_year',
+                     'END-DATE-MONTH-(MM)': 'end_date_month',
+                     'END-DATE-DAY-(DD)': 'end_date_day',
+                     'END-DATE-YEAR-(YYYY)': 'end_date_year',
+                     'DUPLICATE': 'duplicate',
                      'sheet_notes': 'sheet_notes',
-                     'DUPLICATE': 'duplicate'
                     }
 
 
@@ -441,6 +454,14 @@ class CsvCreatePicturae:
         #self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
         #
         self.record_full.rename(columns=col_dict, inplace=True)
+
+        #creating image path
+        self.record_full["image_path"] = (
+                self.record_full["CSV_batch"].astype(str).str.strip()
+                + os.sep + "undatabased" + os.sep
+                + self.record_full["CatalogNumber"].astype(str).str.strip()
+                + ".tif"
+        )
 
         #self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
         #                        quoting=csv.QUOTE_NONNUMERIC, index=False)
@@ -626,6 +647,68 @@ class CsvCreatePicturae:
 
         return str(gen_spec), str(full_name), str(first_intra), str(tax_name), str(hybrid_base)
 
+    def backfill_tax_family(self):
+        """
+        Fill missing Family values by retrieving parent ID with genus.
+        Uses caching to avoid repeated DB calls.
+        """
+
+        #  only rows missing family -
+        fam = self.record_full.get("Family")
+        gen = self.record_full.get("Genus")
+
+        if fam is None or gen is None:
+            self.logger.warning("backfill_tax_family: missing Family or Genus column; skipping.")
+            return
+
+        fam_missing = fam.isna() | (fam.astype(str).str.strip() == "")
+        genus_present = gen.astype(str).str.strip().ne("")
+        mask = fam_missing & genus_present
+
+        if not mask.any():
+            return
+
+        genus_to_family = {}
+
+        unique_genera = (
+            self.record_full.loc[mask, "Genus"]
+            .astype(str).str.strip()
+            .drop_duplicates()
+            .tolist()
+        )
+
+        for genus_name in unique_genera:
+            sql_genus = f"""
+                SELECT ParentID
+                FROM taxon
+                WHERE FullName = {repr(genus_name)}
+                LIMIT 1;
+            """
+            parent_id = self.specify_db_connection.get_one_record(sql_genus)
+
+            if not parent_id or parent_id in (None, "", 0):
+                genus_to_family[genus_name] = None
+                continue
+
+            sql_parent = f"""
+                SELECT FullName
+                FROM taxon
+                WHERE TaxonID = {int(parent_id)}
+                LIMIT 1;
+            """
+            parent_family = self.specify_db_connection.get_one_record(sql_parent)
+
+            genus_to_family[genus_name] = parent_family if parent_family else None
+
+        fill_series = (
+            self.record_full.loc[mask, "Genus"]
+            .astype(str).str.strip()
+            .map(genus_to_family)
+        )
+
+        can_fill = fill_series.notna() & (fill_series.astype(str).str.strip() != "")
+        self.record_full.loc[mask & can_fill, "Family"] = fill_series.loc[can_fill]
+
 
     def col_clean(self):
         """parses and cleans dataframe columns until ready for upload.
@@ -642,7 +725,8 @@ class CsvCreatePicturae:
             self.record_full[colname] = self.record_full[colname].apply(
                 lambda x: replace_apostrophes(x).strip() if isinstance(x, str) else x
             )
-
+        # filling in missing family with existin genera in DB
+        self.backfill_tax_family()
         # flagging missing data
         self.flag_missing_data()
 
@@ -991,7 +1075,7 @@ class CsvCreatePicturae:
 
         self.read_and_merge_image_manifest()
 
-        self.record_full.drop(columns=['mostly_handwritten', 'folder_barcode', 'start_date_month',
+        self.record_full.drop(columns=['folder_barcode', 'start_date_month',
                                        'start_date_day', 'start_date_year', 'end_date_month',
                                        'end_date_day', 'end_date_year'], inplace=True)
 
@@ -1024,23 +1108,25 @@ class CsvCreatePicturae:
         # merging and cleaning csv files
         self.csv_merge_and_clean()
         # renaming columns
-        # self.csv_colnames()
-        # # cleaning data
-        # self.col_clean()
-        # #  check taxa against db
-        # self.check_taxa_against_database()
-        # #  running taxa through TNRS
-        # self.taxon_check_tnrs()
-        # # checking if barcode record present in database
-        # self.barcode_has_record()
-        # #  checking if barcode has valid image file
-        # self.check_if_images_present()
-        # # checking if image has record
-        # self.image_has_record()
-        # # checking if barcode has valid file name for barcode
-        # self.check_barcode_match()
-        # # writing csv for inspection and upload
-        # self.write_upload_csv()
+        self.csv_colnames()
+        # cleaning data
+        self.col_clean()
+
+        print(self.record_full.head(10))
+        # check taxa against db
+        self.check_taxa_against_database()
+        #  running taxa through TNRS
+        self.taxon_check_tnrs()
+        # checking if barcode record present in database
+        self.barcode_has_record()
+        # checking if barcode has valid image file
+        self.check_if_images_present()
+        # checking if image has record
+        self.image_has_record()
+        # checking if barcode has valid file name for barcode
+        self.check_barcode_match()
+        # writing csv for inspection and upload
+        self.write_upload_csv()
 
 
 #
