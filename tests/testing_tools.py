@@ -6,38 +6,72 @@ import os
 import hashlib
 import random
 import string
+
+
 class TestingTools:
 
     def create_fake_dataset(self, num_records: int, path_list: list):
-        """create_fake_dataset: creates a fake csv dataset with random data of a custom length,
-                                can create multiple fake datasets with custom file_paths provided in a list.
-            args:
-                num_records: the amount of rows that will be in the fake dataset
-                path_list: the number of paths at which to save the same number of fake datasets"""
         fake = Faker()
-        for path in path_list:
 
-            with open(path, 'w', newline='') as csvfile:
+        for path in path_list:
+            lower = path.lower()
+            is_cover = "cover" in lower
+            is_sheet = "sheet" in lower
+
+            with open(path, "w", newline="") as csvfile:
                 writer = csv.writer(csvfile)
 
-                writer.writerow(['SPECIMEN-BARCODE', 'FOLDER-BARCODE', 'PATH-JPG', 'SPECIMEN-BATCH', 'CSV-BATCH',
-                                 'NOTES', 'APPLICATION-ID', 'OBJECT-TYPE', 'APPLICATION-BATCH', 'FEEDBACK-ALEMBO',
-                                 'FEEDBACK-CALIFORNIA'])
-                for i in range(num_records):
-                    # to keep barcodes matching between folder and specimen csvs for merging
-                    ordered_bar = 123456
-                    if "cover" in path.lower():
-                        specimen_bar = "CAS_" + f"{ordered_bar + i}"
-                    else:
-                        specimen_bar = f"{ordered_bar + i}"
+                col_list = [
+                    "IMAGE-FILENAME",
+                    "FOLDER-BARCODE",
+                    "SPECIMEN-BARCODE",
+                    "NOTES",
+                    "DDD-BATCH-NAME",
+                    "PICTURAE-BATCH-NAME",
+                ]
 
-                    folder_barcode = "CAS_" + f"{ordered_bar + i}"
-                    # populating rest of columns with random data
-                    filler_list = ["abcdefg"] * 8
-                    jpg_path = fake.file_path(depth=random.randint(1, 5), category='image', extension='jpg')
-                    # writing data to CSV
-                    row_list = [specimen_bar, folder_barcode, jpg_path] + filler_list
-                    writer.writerow(row_list)
+                # For COVER/SHEET, only keep the non-barcode fields.
+                # Manifest keeps barcode columns.
+                if is_cover or is_sheet:
+                    to_remove = {"FOLDER-BARCODE", "SPECIMEN-BARCODE"}
+                    col_list = [c for c in col_list if c not in to_remove]
+
+                writer.writerow(col_list)
+
+                ordered_bar = 123456  # stable base
+
+                for i in range(num_records):
+                    digits = f"{ordered_bar + i}" + ".jpg"
+                    folder_barcode = f"Cover{digits}" + "_2"
+                    specimen_barcode = f"{ordered_bar + i}"
+
+                    if is_cover:
+                        # COVER: IMAGE-FILENAME ends with .jpg; you strip .jpg to derive folder barcode
+                        image_filename = f"{folder_barcode}.jpg"
+                        notes = "cover note"
+                    elif is_sheet:
+                        # SHEET: IMAGE-FILENAME has non-numerics; you strip to digits for specimen barcode
+                        image_filename = f"{digits}"
+                        notes = "sheet note"
+                    else:
+                        # MANIFEST (or anything else): include both barcodes; IMAGE-FILENAME can be blank
+                        image_filename = ""
+                        notes = "manifest note"
+
+                    ddd_batch = f"DDD_{self.generate_random_md5()[:6]}"
+                    picturae_batch = f"{self.generate_random_md5()[:8]}_BATCH_0001"
+
+                    # Build row values matching the header order
+                    row_map = {
+                        "IMAGE-FILENAME": f"{image_filename}".strip(),
+                        "FOLDER-BARCODE": f"{folder_barcode}".strip(),
+                        "SPECIMEN-BARCODE": f"{specimen_barcode}".strip(),
+                        "NOTES": notes,
+                        "DDD-BATCH-NAME": ddd_batch,
+                        "PICTURAE-BATCH-NAME": picturae_batch,
+                    }
+                    writer.writerow([row_map[c] for c in col_list])
+
             print(f"Fake dataset {path} with {num_records} records created successfully")
 
     def create_test_images(self, barcode_list: list, color: str, expected_dir: str):
