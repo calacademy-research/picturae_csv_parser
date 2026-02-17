@@ -16,10 +16,19 @@ import logging
 from get_configs import get_config
 from taxon_tools.BOT_TNRS import iterate_taxon_resolve
 from image_client import ImageClient
+from coordinate_parser.parser import parse_coordinate
+import re
+import math
+import pandas as pd
+import numpy as np
+from datetime import datetime
+
 starting_time_stamp = datetime.now()
+
 
 class IncorrectTaxonError(Exception):
     pass
+
 
 class InvalidFilenameError(Exception):
     pass
@@ -50,7 +59,6 @@ class CsvCreatePicturae:
         self.logger.debug(f"extracting digits from {filepath} to get {string_digits}")
         return string_digits
 
-
     def init_all_vars(self):
         """init_all_vars:to use for testing and decluttering init function,
                             initializes all class level variables  """
@@ -65,10 +73,7 @@ class CsvCreatePicturae:
 
         self.dir_path = self.picturae_config.DATA_FOLDER + "csv_batch"
 
-
-
         # setting up alternate csv tools connections
-
         self.sql_csv_tools = SqlCsvTools(config=self.picturae_config, logging_level=self.logger.getEffectiveLevel())
 
         self.manifest_cols = ['TYPE', 'FOLDER-BARCODE', 'SPECIMEN-BARCODE', 'FAMILY', 'BARCODE_2', "TIMESTAMP", "PATH"]
@@ -83,7 +88,6 @@ class CsvCreatePicturae:
 
         for param in init_list:
             setattr(self, param, None)
-
 
     def file_present(self):
         """file_present:
@@ -101,32 +105,31 @@ class CsvCreatePicturae:
 
         if dir_sub is True:
 
-                sheet_count = 0
-                cover_count = 0
-                manifest_count = 0
+            sheet_count = 0
+            cover_count = 0
+            manifest_count = 0
 
-                for root, dirs, files in os.walk(self.dir_path):
-                    for file in files:
-                        file_string = file.lower()
-                        if "sheet" in file_string:
-                            sheet_count += 1
-                            self.sheet_list.append(file)
-                        elif "cover" in file_string:
-                            cover_count += 1
-                            self.cover_list.append(file)
+            for root, dirs, files in os.walk(self.dir_path):
+                for file in files:
+                    file_string = file.lower()
+                    if "sheet" in file_string:
+                        sheet_count += 1
+                        self.sheet_list.append(file)
+                    elif "cover" in file_string:
+                        cover_count += 1
+                        self.cover_list.append(file)
 
-                        elif "batch" in file_string:
-                            manifest_count += 1
-                            self.manifest_list.append(file)
-                        else:
-                            self.logger.info(f"csv {file} file does not fit format , skipping")
-                if sheet_count != cover_count:
-                    raise ValueError(f"Count of Sheet CSVs and Cover CSVs do not match {sheet_count} != {cover_count}")
-                else:
-                    self.logger.info("Sheet and Cover CSVs exist!")
+                    elif "batch" in file_string:
+                        manifest_count += 1
+                        self.manifest_list.append(file)
+                    else:
+                        self.logger.info(f"csv {file} file does not fit format , skipping")
+            if sheet_count != cover_count:
+                raise ValueError(f"Count of Sheet CSVs and Cover CSVs do not match {sheet_count} != {cover_count}")
+            else:
+                self.logger.info("Sheet and Cover CSVs exist!")
         else:
             raise ValueError(f"picturae csv subdirectory not present")
-
 
     def csv_read_path(self, csv_level: str):
         """Reads in CSV data for given level and date.
@@ -178,7 +181,6 @@ class CsvCreatePicturae:
         else:
             raise ValueError("The resulting DataFrame is empty; no data was loaded.")
 
-
     def csv_merge_and_clean(self):
         """csv_merge_and_clean:
                 reads, merges and data wrangles the set of folder and specimen csvs
@@ -190,7 +192,6 @@ class CsvCreatePicturae:
         self.fill_duplicate_barcodes()
 
         self.remove_duplicate_barcodes()
-
 
     def read_folder_and_specimen_csvs(self):
         """read the folder and specimen CSVs into the environment.
@@ -213,7 +214,6 @@ class CsvCreatePicturae:
         barcode_pat = r"(?<!\d)\d{7,}(?!\d)"
 
         # Only treat as "duplicate" if NOTES contains a barcode-like number
-
         is_duplicate = self.record_full["sheet_notes"].astype(str).str.contains(barcode_pat, regex=True, na=False)
 
         self.record_full["DUPLICATE"] = is_duplicate
@@ -287,7 +287,6 @@ class CsvCreatePicturae:
                 pass
         return spec_csv
 
-
     def merge_folder_and_specimen_csvs(self, fold_csv, spec_csv, manifest_csv):
         """define self.record_full, Merge the folder and specimen CSVs and fill missing values.
             args:
@@ -304,7 +303,6 @@ class CsvCreatePicturae:
         spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
 
         fold_difference = set(self.record_full['FOLDER-BARCODE']) - set(manifest_csv['FOLDER-BARCODE'])
-
 
         if spec_difference:
 
@@ -329,7 +327,6 @@ class CsvCreatePicturae:
 
         if fold_difference:
             self.logger.warning(f"Following folder barcodes not in specimen csv {fold_difference}")
-
 
     def remove_duplicate_barcodes(self):
         """Removing and saving rows with improperly marked duplicate records for further visual QC"""
@@ -365,84 +362,82 @@ class CsvCreatePicturae:
         if merge_len > unique_len:
             self.logger.error(f"Detected {merge_len - unique_len} duplicate records")
 
-
     def csv_colnames(self):
         """csv_colnames: function to be used to rename columns to DB standards.
            args:
                 none"""
 
         col_dict = {
-                     'PICTURAE-BATCH-NAME': 'CSV_batch',
-                     'FOLDER-BARCODE': 'folder_barcode',
-                     'SPECIMEN-BARCODE': 'CatalogNumber',
-                     'ACCESSION - NUMBER - (CAS)(DS)': 'herb_code',
-                     'ACCESSION-NUMBER': 'accession_number',
-                     'PARENT-BARCODE': 'parent_CatalogNumber',
-                     'TAXON_ID': 'taxon_id',
-                     'FAMILY': 'Family',
-                     'GENUS': 'Genus',
-                     'SPECIES': 'Species',
-                     'QUALIFIER': 'qualifier',
-                     'RANK-1': 'Rank 1',
-                     'EPITHET-1': 'Epithet 1',
-                     'RANK-2': 'Rank 2',
-                     'EPITHET-2': 'Epithet 2',
-                     'cover_notes': 'cover_notes',
-                     'HYBRID': 'Hybrid',
-                     'AUTHOR': 'Author',
-                     'COLLECTOR-NUMBER': 'collector_number',
-                     'COLLECTOR-ID-(1)': 'agent_id1',
-                     'COLLECTOR-FIRST-NAME-(1)': 'collector_first_name1',
-                     'COLLECTOR-MIDDLE-NAME-(1)': 'collector_middle_name1',
-                     'COLLECTOR-LAST-NAME-(1)': 'collector_last_name1',
-                     'COLLECTOR-ID-(2)': 'agent_id2',
-                     'COLLECTOR-FIRST-NAME-(2)': 'collector_first_name2',
-                     'COLLECTOR-MIDDLE-NAME-(2)': 'collector_middle_name2',
-                     'COLLECTOR-LAST-NAME-(2)': 'collector_last_name2',
-                     'COLLECTOR-ID-(3)': 'agent_id3',
-                     'COLLECTOR-FIRST-NAME-(3)': 'collector_first_name3',
-                     'COLLECTOR-MIDDLE-NAME-(3)': 'collector_middle_name3',
-                     'COLLECTOR-LAST-NAME-(3)': 'collector_last_name3',
-                     'COLLECTOR-ID-(4)': 'agent_id4',
-                     'COLLECTOR-FIRST-NAME-(4)': 'collector_first_name4',
-                     'COLLECTOR-MIDDLE-NAME-(4)': 'collector_middle_name4',
-                     'COLLECTOR-LAST-NAME-(4)': 'collector_last_name4',
-                     'COLLECTOR-ID-(5)': 'agent_id5',
-                     'COLLECTOR-FIRST-NAME-(5)': 'collector_first_name5',
-                     'COLLECTOR-MIDDLE-NAME-(5)': 'collector_middle_name5',
-                     'COLLECTOR-LAST-NAME-(5)': 'collector_last_name5',
-                     'COLLECTOR-ID-(6)': 'agent_id6',
-                     'COLLECTOR-FIRST-NAME-(6)': 'collector_first_name6',
-                     'COLLECTOR-MIDDLE-NAME-(6)': 'collector_middle_name6',
-                     'COLLECTOR-LAST-NAME-(6)': 'collector_last_name6', ''
-                     'LOCALITY-ID': 'locality_id',
-                     'COUNTRY': 'Country',
-                     'STATE': 'State',
-                     'COUNTY': 'County',
-                     'PRECISE_LOCALITY': 'locality',
-                     'LATITUDE': 'latitude',
-                     'LONGITUDE': 'longitude',
-                     'DATUM': 'datum',
-                     'COORDINATE-FORMAT-(DMS)-(DM)-(DD)-(UNKNOWN)': 'coordinate_format',
-                     'NORTHING': 'northing',
-                     'EASTING': 'easting',
-                     'ZONE': 'zone',
-                     'MINIMUM-ELEVATION': 'min_elevation',
-                     'MAXIMUM-ELEVATION': 'max_elevation',
-                     'ELEVATION-UNITS-(FT-OR-M)': 'elevation_unit',
-                     'SPECIMEN - DESCRIPTION': 'specimen_desc',
-                     'HABITAT-+-ASSOCIATED-SPECIES': 'habitat',
-                     'VERBATIM-DATE': 'verbatim_date',
-                     'START-DATE-MONTH-(MM)': 'start_date_month',
-                     'START-DATE-DAY-(DD)': 'start_date_day',
-                     'START-DATE-YEAR-(YYYY)': 'start_date_year',
-                     'END-DATE-MONTH-(MM)': 'end_date_month',
-                     'END-DATE-DAY-(DD)': 'end_date_day',
-                     'END-DATE-YEAR-(YYYY)': 'end_date_year',
-                     'DUPLICATE': 'duplicate',
-                     'sheet_notes': 'sheet_notes',
-                    }
-
+            'PICTURAE-BATCH-NAME': 'CSV_batch',
+            'FOLDER-BARCODE': 'folder_barcode',
+            'SPECIMEN-BARCODE': 'CatalogNumber',
+            'ACCESSION - NUMBER - (CAS)(DS)': 'herb_code',
+            'ACCESSION-NUMBER': 'accession_number',
+            'PARENT-BARCODE': 'parent_CatalogNumber',
+            'TAXON_ID': 'taxon_id',
+            'FAMILY': 'Family',
+            'GENUS': 'Genus',
+            'SPECIES': 'Species',
+            'QUALIFIER': 'qualifier',
+            'RANK-1': 'Rank 1',
+            'EPITHET-1': 'Epithet 1',
+            'RANK-2': 'Rank 2',
+            'EPITHET-2': 'Epithet 2',
+            'cover_notes': 'cover_notes',
+            'HYBRID': 'Hybrid',
+            'AUTHOR': 'Author',
+            'COLLECTOR-NUMBER': 'collector_number',
+            'COLLECTOR-ID-(1)': 'agent_id1',
+            'COLLECTOR-FIRST-NAME-(1)': 'collector_first_name1',
+            'COLLECTOR-MIDDLE-NAME-(1)': 'collector_middle_name1',
+            'COLLECTOR-LAST-NAME-(1)': 'collector_last_name1',
+            'COLLECTOR-ID-(2)': 'agent_id2',
+            'COLLECTOR-FIRST-NAME-(2)': 'collector_first_name2',
+            'COLLECTOR-MIDDLE-NAME-(2)': 'collector_middle_name2',
+            'COLLECTOR-LAST-NAME-(2)': 'collector_last_name2',
+            'COLLECTOR-ID-(3)': 'agent_id3',
+            'COLLECTOR-FIRST-NAME-(3)': 'collector_first_name3',
+            'COLLECTOR-MIDDLE-NAME-(3)': 'collector_middle_name3',
+            'COLLECTOR-LAST-NAME-(3)': 'collector_last_name3',
+            'COLLECTOR-ID-(4)': 'agent_id4',
+            'COLLECTOR-FIRST-NAME-(4)': 'collector_first_name4',
+            'COLLECTOR-MIDDLE-NAME-(4)': 'collector_middle_name4',
+            'COLLECTOR-LAST-NAME-(4)': 'collector_last_name4',
+            'COLLECTOR-ID-(5)': 'agent_id5',
+            'COLLECTOR-FIRST-NAME-(5)': 'collector_first_name5',
+            'COLLECTOR-MIDDLE-NAME-(5)': 'collector_middle_name5',
+            'COLLECTOR-LAST-NAME-(5)': 'collector_last_name5',
+            'COLLECTOR-ID-(6)': 'agent_id6',
+            'COLLECTOR-FIRST-NAME-(6)': 'collector_first_name6',
+            'COLLECTOR-MIDDLE-NAME-(6)': 'collector_middle_name6',
+            'COLLECTOR-LAST-NAME-(6)': 'collector_last_name6',
+            'LOCALITY-ID': 'locality_id',
+            'COUNTRY': 'Country',
+            'STATE': 'State',
+            'COUNTY': 'County',
+            'PRECISE_LOCALITY': 'locality',
+            'LATITUDE': 'latitude',
+            'LONGITUDE': 'longitude',
+            'DATUM': 'datum',
+            'COORDINATE-FORMAT-(DMS)-(DM)-(DD)-(UNKNOWN)': 'coordinate_format',
+            'NORTHING': 'northing',
+            'EASTING': 'easting',
+            'ZONE': 'zone',
+            'MINIMUM-ELEVATION': 'min_elevation',
+            'MAXIMUM-ELEVATION': 'max_elevation',
+            'ELEVATION-UNITS-(FT-OR-M)': 'elevation_unit',
+            'SPECIMEN - DESCRIPTION': 'specimen_desc',
+            'HABITAT-+-ASSOCIATED-SPECIES': 'habitat',
+            'VERBATIM-DATE': 'verbatim_date',
+            'START-DATE-MONTH-(MM)': 'start_date_month',
+            'START-DATE-DAY-(DD)': 'start_date_day',
+            'START-DATE-YEAR-(YYYY)': 'start_date_year',
+            'END-DATE-MONTH-(MM)': 'end_date_month',
+            'END-DATE-DAY-(DD)': 'end_date_day',
+            'END-DATE-YEAR-(YYYY)': 'end_date_year',
+            'DUPLICATE': 'duplicate',
+            'sheet_notes': 'sheet_notes',
+        }
 
         col_order_list = []
         for key, value in col_dict.items():
@@ -451,19 +446,19 @@ class CsvCreatePicturae:
         self.record_full = self.record_full.reindex(columns=col_order_list)
 
         # comment out before committing, code to create simple manifests
-        #self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
+        # self.record_full['PATH-JPG'] = self.record_full['PATH-JPG'].apply(os.path.basename)
         #
         self.record_full.rename(columns=col_dict, inplace=True)
 
-        #creating image path
+        # creating image path
         self.record_full["image_path"] = (
-                self.record_full["CSV_batch"].astype(str).str.strip()
-                + os.sep + "undatabased" + os.sep
-                + self.record_full["CatalogNumber"].astype(str).str.strip()
-                + ".tif"
+            self.record_full["CSV_batch"].astype(str).str.strip()
+            + os.sep + "undatabased" + os.sep
+            + self.record_full["CatalogNumber"].astype(str).str.strip()
+            + ".tif"
         )
 
-        #self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
+        # self.record_full.to_csv(f'picturae_csv/csv_batch/PIC_upload/master_db.csv',
         #                        quoting=csv.QUOTE_NONNUMERIC, index=False)
         #
         # self.logger.info("merged csv written")
@@ -521,7 +516,7 @@ class CsvCreatePicturae:
         invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
 
         return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv, \
-               invalid_verbatim_csv)
+                invalid_verbatim_csv)
 
     def flag_missing_data(self):
 
@@ -558,6 +553,261 @@ class CsvCreatePicturae:
                 message += f" {item_set} in batches {batch_set}\n\n"
         if message:
             raise ValueError(message.strip())
+
+    # ---------------------------
+    # Hemisphere + coord parsing
+    # ---------------------------
+
+    def safe_parse_coord(
+        self,
+        coord_string,
+        coord_type: str,
+        *,
+        hemisphere: str | None,
+        allow_hemisphere_default: bool,
+    ):
+        """
+        coord_type: 'lat' or 'lon'
+        hemisphere: one of NorthWest/NorthEast/SouthWest/SouthEast (or None/NA)
+        allow_hemisphere_default: if False, DO NOT apply hemisphere-based sign guessing.
+                                  Only honor explicit N/S/E/W or +/-.
+        """
+        _SIGN_RE = re.compile(r"^[\s]*([+-])")
+
+        HEMISPHERE_DEFAULTS = {
+            "NorthWest": ("N", "W"),
+            "NorthEast": ("N", "E"),
+            "SouthWest": ("S", "W"),
+            "SouthEast": ("S", "E"),
+        }
+
+        try:
+            if coord_string is None:
+                return math.nan
+
+            raw = str(coord_string).strip()
+            if raw == "":
+                return math.nan
+
+            val = parse_coordinate(raw, coord_type=coord_type)
+            if val is None:
+                return math.nan
+
+            val = float(val)
+            s = raw.upper()
+
+            # 1) Explicit N/S/E/W always wins
+            ct = coord_type.lower()
+            if ct in ("lat", "latitude"):
+                if "S" in s:
+                    return -abs(val)
+                if "N" in s:
+                    return abs(val)
+            elif ct in ("lon", "long", "longitude"):
+                if "W" in s:
+                    return -abs(val)
+                if "E" in s:
+                    return abs(val)
+            else:
+                return math.nan
+
+            # 2) Explicit typed sign wins (or already-negative parsed value)
+            m = _SIGN_RE.match(raw)
+            typed_sign = m.group(1) if m else None
+            if typed_sign == "-":
+                return -abs(val)
+            if typed_sign == "+":
+                return abs(val)
+            if val < 0:
+                return val
+
+            # 3) If we are NOT allowed to infer hemisphere, don't guess
+            if not allow_hemisphere_default:
+                return math.nan
+
+            # 4) Apply hemisphere defaults (only for safe countries)
+            lat_default, lon_default = HEMISPHERE_DEFAULTS.get(str(hemisphere), ("N", "W"))
+
+            if ct in ("lat", "latitude"):
+                return abs(val) if lat_default == "N" else -abs(val)
+            else:  # lon
+                return -abs(val) if lon_default == "W" else abs(val)
+
+        except Exception:
+            return math.nan
+
+    @staticmethod
+    def assign_country_hemisphere_flags(
+        df: pd.DataFrame,
+        country_col: str = "Country",
+        hemisphere_col: str = "hemisphere",
+        assignable_col: str = "assign_hemisphere",
+        *,
+        aliases: dict | None = None,
+        add_debug_cols: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Adds:
+          - hemisphere_col: NorthWest/NorthEast/SouthWest/SouthEast for non-ambiguous countries; NA otherwise
+          - assignable_col: True if the country does NOT cross Equator (lat 0) AND does NOT cross Prime Meridian (lon 0)
+                            False if it crosses either line or cannot be matched.
+
+        Requires: geopandas (uses Natural Earth lowres dataset bundled with geopandas)
+        """
+
+        try:
+            import geopandas as gpd
+        except Exception as e:
+            raise ImportError(
+                "This function requires geopandas (no hardcoded fallback). "
+                "Install with: pip install geopandas"
+            ) from e
+
+        out = df.copy()
+
+        s = (
+            out[country_col]
+            .astype("string")
+            .fillna("")
+            .str.strip()
+        )
+
+        # Treat these as inherently non-assignable
+        is_earth = s.str.lower().isin({"earth", "world", "global"})
+        out[hemisphere_col] = pd.NA
+        out[assignable_col] = False
+
+        # Load polygons
+        world = gpd.read_file(gpd.datasets.get_path("naturalearth_lowres"))[["name", "geometry"]].copy()
+        world = world.dropna(subset=["geometry"])
+        world_idx = world.set_index("name")
+
+        aliases = aliases or {}
+
+        # Precompute for unique values for speed
+        unique_countries = pd.Series(s.unique(), dtype="string").fillna("").str.strip()
+        unique_countries = unique_countries[
+            (unique_countries != "") & (~unique_countries.str.lower().isin({"earth", "world", "global"}))]
+
+        hemi_map: dict[str, str | pd.NA] = {}
+        assign_map: dict[str, bool] = {}
+        eq_map: dict[str, bool] = {}
+        pm_map: dict[str, bool] = {}
+        matched_map: dict[str, bool] = {}
+
+        for orig in unique_countries.tolist():
+            name = aliases.get(orig, orig)
+
+            matched = name in world_idx.index
+            matched_map[orig] = matched
+
+            if not matched:
+                hemi_map[orig] = pd.NA
+                assign_map[orig] = False
+                eq_map[orig] = False
+                pm_map[orig] = False
+                continue
+
+            geom = world_idx.loc[name, "geometry"]
+            minx, miny, maxx, maxy = geom.bounds
+
+            crosses_equator = (miny < 0) and (maxy > 0)
+            crosses_prime = (minx < 0) and (maxx > 0)
+
+            eq_map[orig] = crosses_equator
+            pm_map[orig] = crosses_prime
+
+            safe = not (crosses_equator or crosses_prime)
+            assign_map[orig] = safe
+
+            if not safe:
+                hemi_map[orig] = pd.NA
+                continue
+
+            # Use a point guaranteed to lie inside the country
+            pt = geom.representative_point()
+            lon, lat = float(pt.x), float(pt.y)
+
+            ns = "N" if lat >= 0 else "S"
+            ew = "E" if lon >= 0 else "W"
+
+            hemi_map[orig] = {
+                ("N", "W"): "NorthWest",
+                ("N", "E"): "NorthEast",
+                ("S", "W"): "SouthWest",
+                ("S", "E"): "SouthEast",
+            }[(ns, ew)]
+
+        # Apply results
+        out.loc[~is_earth, assignable_col] = out.loc[~is_earth, country_col].map(assign_map).fillna(False)
+        out.loc[out[assignable_col], hemisphere_col] = out.loc[out[assignable_col], country_col].map(hemi_map)
+
+        # Force Earth/World to be unassigned
+        out.loc[is_earth, assignable_col] = False
+        out.loc[is_earth, hemisphere_col] = pd.NA
+
+        if add_debug_cols:
+            out["country_matched"] = (~is_earth) & out[country_col].map(matched_map).fillna(False)
+            out["crosses_equator"] = (~is_earth) & out[country_col].map(eq_map).fillna(False)
+            out["crosses_prime_meridian"] = (~is_earth) & out[country_col].map(pm_map).fillna(False)
+
+        return out
+
+    def process_lat_long_frame(self):
+        """Only keeps lat/long columns from processing if they exist. Creates numeric_columns"""
+        columns = [
+            'lat_verbatim_1', 'long_verbatim_1',
+            'lat_verbatim_2', 'long_verbatim_2',
+            'lat_verbatim_3', 'long_verbatim_3',
+        ]
+
+        existing_columns = [col for col in columns if col in self.record_full.columns]
+
+        matches = len(existing_columns) // 2
+
+        # Ensure hemisphere + assign_hemisphere exist (Country-based)
+        if "Country" in self.record_full.columns and ("hemisphere" not in self.record_full.columns or "assign_hemisphere" not in self.record_full.columns):
+            hemi_df = self.assign_country_hemisphere_flags(
+                self.record_full[[ "Country" ]].copy(),
+                country_col="Country",
+                hemisphere_col="hemisphere",
+                assignable_col="assign_hemisphere",
+                aliases=None,
+                add_debug_cols=False,
+            )
+            self.record_full["hemisphere"] = hemi_df["hemisphere"]
+            self.record_full["assign_hemisphere"] = hemi_df["assign_hemisphere"]
+
+        # build numeric counterparts for any discovered pair index i
+        for i in range(1, matches + 1):
+            lat_v = f'lat_verbatim_{i}'
+            lon_v = f'long_verbatim_{i}'
+
+            if lat_v in self.record_full.columns:
+                self.record_full[f'lat_numeric_{i}'] = self.record_full.apply(
+                    lambda row: self.safe_parse_coord(
+                        row.get(lat_v),
+                        coord_type="latitude",
+                        hemisphere=row.get("hemisphere", None),
+                        allow_hemisphere_default=bool(row.get("assign_hemisphere", False)),
+                    ),
+                    axis=1
+                )
+                existing_columns.append(f'lat_numeric_{i}')
+
+            if lon_v in self.record_full.columns:
+                self.record_full[f'long_numeric_{i}'] = self.record_full.apply(
+                    lambda row: self.safe_parse_coord(
+                        row.get(lon_v),
+                        coord_type="longitude",
+                        hemisphere=row.get("hemisphere", None),
+                        allow_hemisphere_default=bool(row.get("assign_hemisphere", False)),
+                    ),
+                    axis=1
+                )
+                existing_columns.append(f'long_numeric_{i}')
+
+        return self.record_full[existing_columns].copy()
 
     def taxon_concat(self, row):
         """taxon_concat:
@@ -709,7 +959,6 @@ class CsvCreatePicturae:
         can_fill = fill_series.notna() & (fill_series.astype(str).str.strip() != "")
         self.record_full.loc[mask & can_fill, "Family"] = fill_series.loc[can_fill]
 
-
     def col_clean(self):
         """parses and cleans dataframe columns until ready for upload.
             runs dependent function taxon concat
@@ -730,12 +979,11 @@ class CsvCreatePicturae:
         # flagging missing data
         self.flag_missing_data()
 
+        # self clean lat long:
+        self.process_lat_long_frame()
 
         # converting hybrid column to true boolean
-
         self.record_full['Hybrid'] = self.record_full['Hybrid'].apply(str_to_bool)
-
-        # concatenating year, month, day columns into start/end date columns
 
         # Replace '.jpg' or '.jpeg' (case insensitive) with '.tif'
         self.record_full['image_path'] = self.record_full['image_path'].str.replace(r"\.jpe?g", ".tif",
@@ -743,7 +991,7 @@ class CsvCreatePicturae:
 
         # truncating image_path column and concatenating with batch path
         self.record_full['CSV_batch'] = self.record_full['CSV_batch'].apply(
-                                        lambda csv_batch: remove_before(csv_batch, "CP1"))
+            lambda csv_batch: remove_before(csv_batch, "CP1"))
 
         self.record_full['image_path'] = self.record_full['image_path'].apply(
             lambda path_img: path.basename(path_img))
@@ -751,19 +999,15 @@ class CsvCreatePicturae:
         self.record_full['image_path'] = self.path_prefix + self.record_full['CSV_batch'] + f"{os.path.sep}undatabased" + \
                                          f"{os.path.sep}" + self.record_full['image_path']
 
-
         # removing leading and trailing space from taxa
-
         tax_cols = ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2']
 
         self.record_full[tax_cols] = self.record_full[tax_cols].map(
-                                           lambda x: x.strip() if isinstance(x, str) else x)
-
+            lambda x: x.strip() if isinstance(x, str) else x)
 
         # filling in missing subtaxa ranks for first infraspecific rank
-
         self.record_full['missing_rank'] = (pd.isna(self.record_full[f'Rank 1']) & pd.notna(
-                                           self.record_full[f'Epithet 1'])) | \
+            self.record_full[f'Epithet 1'])) | \
                                            ((self.record_full[f'Rank 1'] == '') & (self.record_full[f'Epithet 1'] != ''))
 
         self.record_full['missing_rank'] = self.record_full['missing_rank'].astype(bool)
@@ -790,7 +1034,6 @@ class CsvCreatePicturae:
         self.record_full = fill_empty_col(self.record_full, string_fill="[unspecified]", col_name="locality")
 
         self.record_full = fill_empty_col(self.record_full, string_fill="[No date on label]", col_name="verbatim_date")
-
 
     def barcode_has_record(self):
         """check if barcode / catalog number already in collectionobject table"""
@@ -827,27 +1070,26 @@ class CsvCreatePicturae:
             lambda path: self.get_first_digits_from_filepath(path, field_size=9)
         )
         self.record_full['is_barcode_match'] = self.record_full.apply(lambda row: (row['file_path_digits'] ==
-                                                                      row['CatalogNumber'].zfill(9)) or
-                                                                      str_to_bool(row['duplicate']) is True,
+                                                                                   row['CatalogNumber'].zfill(9)) or
+                                                                                  str_to_bool(row['duplicate']) is True,
                                                                       axis=1)
 
         self.record_full = self.record_full.drop(columns='file_path_digits')
-
 
     def check_if_images_present(self):
         """checks that each image exists, creating boolean column for later use"""
 
         self.record_full['image_valid'] = self.record_full.apply(
-                                          lambda row: os.path.exists(f"{row['image_path']}")
-                                                                        or str_to_bool(row['duplicate']) is True,
-                                                                        axis=1)
+            lambda row: os.path.exists(f"{row['image_path']}")
+                        or str_to_bool(row['duplicate']) is True,
+            axis=1)
 
     def taxon_process_row(self, row):
         """applies taxon_get to a row of the picturae python dataframe"""
         taxon_id = self.sql_csv_tools.taxon_get(
-                        name=row['fulltaxon'],
-                        hybrid=str_to_bool(row['Hybrid']),
-                        taxname=row['taxname']
+            name=row['fulltaxon'],
+            hybrid=str_to_bool(row['Hybrid']),
+            taxname=row['taxname']
         )
         # Check for new genus to verify family assignment
         new_genus = False
@@ -960,7 +1202,6 @@ class CsvCreatePicturae:
         else:
             self.logger.error("bar tax length non-numeric")
 
-
     def cleanup_tnrs(self):
         """cleanup_tnrs: operations to re-consolidate rows with hybrids parsed for tnrs,
             and rows with missing rank parsed for tnrs.
@@ -976,7 +1217,6 @@ class CsvCreatePicturae:
         hybrid_mask = (self.record_full['hybrid_base'].notna()) & (self.record_full['hybrid_base'] != '')
 
         self.record_full.loc[hybrid_mask, 'fullname'] = self.record_full.loc[hybrid_mask, 'hybrid_base']
-
 
         self.record_full = self.record_full.drop(columns=['hybrid_base'])
 
@@ -998,7 +1238,7 @@ class CsvCreatePicturae:
         for col in ['fullname', 'first_intra']:
             self.record_full.loc[rank_mask, col] = \
                 self.record_full.loc[rank_mask, col].str.replace(" subsp. ", " var. ",
-                                                                           regex=False)
+                                                                 regex=False)
 
         for col in ['fullname', 'gen_spec', 'first_intra', 'taxname']:
             self.record_full[col] = self.record_full[col].apply(remove_qualifiers)
@@ -1010,7 +1250,6 @@ class CsvCreatePicturae:
 
         if self.tnrs_ignore is False:
             self.flag_tnrs_rows()
-
 
     def flag_tnrs_rows(self):
         """function to flag TNRS rows that do not pass the .99 match threshold"""
@@ -1050,10 +1289,10 @@ class CsvCreatePicturae:
 
         # adding boolean column for rows where manifest family number differs from accepted family and neither are NA
         self.record_full['family_diff'] = np.where(
-                                          self.record_full['Family_x'].notna() & self.record_full['Family_y'].notna() &
-                                          self.record_full['Family_x'].str.strip().ne("") & self.record_full['Family_y'].str.strip().ne("") &
-                                          (self.record_full['Family_x'] != self.record_full['Family_y']),
-                                          True, False)
+            self.record_full['Family_x'].notna() & self.record_full['Family_y'].notna() &
+            self.record_full['Family_x'].str.strip().ne("") & self.record_full['Family_y'].str.strip().ne("") &
+            (self.record_full['Family_x'] != self.record_full['Family_y']),
+            True, False)
 
         self.record_full['Family_x'] = np.where(
             self.record_full['Family_y'].notna() & self.record_full['Family_y'].str.strip().ne(""),
@@ -1064,9 +1303,6 @@ class CsvCreatePicturae:
         self.record_full.drop(columns="Family_y", inplace=True)
 
         self.record_full.rename(columns={"Family_x": "Family"}, inplace=True)
-
-
-
 
     def write_upload_csv(self):
         """write_upload_csv: writes a copy of csv to PIC upload
@@ -1081,23 +1317,17 @@ class CsvCreatePicturae:
 
         file_path = f"picturae_csv{path.sep}csv_batch{path.sep}PIC_upload{path.sep}PIC_record_{self.date_range}.csv"
 
-        #adding in blank label data field distinct from notes section
-
-
         # quoting non-numerics/non-bools to prevent punctuation from splitting columns
-
         cols_to_quote = self.record_full.select_dtypes(include=['object']).columns
 
         self.record_full[cols_to_quote] = self.record_full[cols_to_quote].astype(str)
 
         # replacing nas and literal string NA
-
         self.record_full = self.record_full.fillna(pd.NA).replace({"<NA>": pd.NA, "nan": pd.NA})
 
         self.record_full.to_csv(file_path, index=False, encoding='utf-8', quoting=csv.QUOTE_NONNUMERIC)
 
         self.logger.info(f'DataFrame has been saved to csv as: {file_path}')
-
 
     def run_all(self):
         """run_all: runs all methods in the class in order"""
@@ -1111,11 +1341,9 @@ class CsvCreatePicturae:
         self.csv_colnames()
         # cleaning data
         self.col_clean()
-
-        print(self.record_full.head(10))
         # check taxa against db
         self.check_taxa_against_database()
-        #  running taxa through TNRS
+        # running taxa through TNRS
         self.taxon_check_tnrs()
         # checking if barcode record present in database
         self.barcode_has_record()
