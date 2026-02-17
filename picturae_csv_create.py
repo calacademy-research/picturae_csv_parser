@@ -23,6 +23,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import geopandas as gpd
+import geodatasets
+
 
 starting_time_stamp = datetime.now()
 
@@ -672,7 +674,19 @@ class CsvCreatePicturae:
         out[assignable_col] = False
 
         # Load polygons
-        world = gpd.read_file(gpd.datasets.get_path("naturalearth_lowres"))[["name", "geometry"]].copy()
+        NE_COUNTRIES_ZIP = "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
+
+        world = gpd.read_file(NE_COUNTRIES_ZIP)
+
+        name_col = None
+        for cand in ("ADMIN", "NAME", "name"):
+            if cand in world.columns:
+                name_col = cand
+                break
+        if name_col is None:
+            raise ValueError(f"Natural Earth dataset missing a name column; got {list(world.columns)}")
+
+        world = world[[name_col, "geometry"]].rename(columns={name_col: "name"}).copy()
         world = world.dropna(subset=["geometry"])
         world_idx = world.set_index("name")
 
@@ -748,21 +762,29 @@ class CsvCreatePicturae:
         return out
 
     def process_lat_long_frame(self):
-        """Only keeps lat/long columns from processing if they exist. Creates numeric_columns"""
-        columns = [
-            'lat_verbatim_1', 'long_verbatim_1',
-            'lat_verbatim_2', 'long_verbatim_2',
-            'lat_verbatim_3', 'long_verbatim_3',
-        ]
+        """
+        Creates:
+          - hemisphere (NorthWest/NorthEast/SouthWest/SouthEast or NA)
+          - assign_hemisphere (bool)
+          - latitude_numeric
+          - longitude_numeric
+        Uses latitude/longitude columns
+        """
 
-        existing_columns = [col for col in columns if col in self.record_full.columns]
+        lat_col = "latitude"
+        lon_col = "longitude"
 
-        matches = len(existing_columns) // 2
+        if lat_col not in self.record_full.columns and lon_col not in self.record_full.columns:
+            return None  # nothing to do
 
         # Ensure hemisphere + assign_hemisphere exist (Country-based)
-        if "Country" in self.record_full.columns and ("hemisphere" not in self.record_full.columns or "assign_hemisphere" not in self.record_full.columns):
+        if (
+                "Country" in self.record_full.columns
+                and (
+                "hemisphere" not in self.record_full.columns or "assign_hemisphere" not in self.record_full.columns)
+        ):
             hemi_df = self.assign_country_hemisphere_flags(
-                self.record_full[[ "Country" ]].copy(),
+                self.record_full[["Country"]].copy(),
                 country_col="Country",
                 hemisphere_col="hemisphere",
                 assignable_col="assign_hemisphere",
@@ -772,36 +794,38 @@ class CsvCreatePicturae:
             self.record_full["hemisphere"] = hemi_df["hemisphere"]
             self.record_full["assign_hemisphere"] = hemi_df["assign_hemisphere"]
 
-        # build numeric counterparts for any discovered pair index i
-        for i in range(1, matches + 1):
-            lat_v = f'lat_verbatim_{i}'
-            lon_v = f'long_verbatim_{i}'
+        # Create numeric columns using the row's hemisphere + assignability
+        if lat_col in self.record_full.columns:
+            self.record_full["latitude_numeric"] = self.record_full.apply(
+                lambda row: self.safe_parse_coord(
+                    row.get(lat_col),
+                    coord_type="latitude",
+                    hemisphere=row.get("hemisphere", None),
+                    allow_hemisphere_default=bool(row.get("assign_hemisphere", False)),
+                ),
+                axis=1,
+            )
 
-            if lat_v in self.record_full.columns:
-                self.record_full[f'lat_numeric_{i}'] = self.record_full.apply(
-                    lambda row: self.safe_parse_coord(
-                        row.get(lat_v),
-                        coord_type="latitude",
-                        hemisphere=row.get("hemisphere", None),
-                        allow_hemisphere_default=bool(row.get("assign_hemisphere", False)),
-                    ),
-                    axis=1
-                )
-                existing_columns.append(f'lat_numeric_{i}')
+        if lon_col in self.record_full.columns:
+            self.record_full["longitude_numeric"] = self.record_full.apply(
+                lambda row: self.safe_parse_coord(
+                    row.get(lon_col),
+                    coord_type="longitude",
+                    hemisphere=row.get("hemisphere", None),
+                    allow_hemisphere_default=bool(row.get("assign_hemisphere", False)),
+                ),
+                axis=1,
+            )
 
-            if lon_v in self.record_full.columns:
-                self.record_full[f'long_numeric_{i}'] = self.record_full.apply(
-                    lambda row: self.safe_parse_coord(
-                        row.get(lon_v),
-                        coord_type="longitude",
-                        hemisphere=row.get("hemisphere", None),
-                        allow_hemisphere_default=bool(row.get("assign_hemisphere", False)),
-                    ),
-                    axis=1
-                )
-                existing_columns.append(f'long_numeric_{i}')
-
-        return self.record_full[existing_columns].copy()
+        return self.record_full[[c for c in [
+            "Country",
+            "hemisphere",
+            "assign_hemisphere",
+            lat_col,
+            "latitude_numeric",
+            lon_col,
+            "longitude_numeric",
+        ] if c in self.record_full.columns]].copy()
 
     def taxon_concat(self, row):
         """taxon_concat:

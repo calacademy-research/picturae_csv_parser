@@ -17,6 +17,7 @@ pytest~=8.4.2
 pytz~=2024.2
 requests==2.32.4
 geopandas~=1.1.2
+geodatasets~=2026.1.0
 sh~=2.0.4
 six==1.16.0
 toml==0.10.2
