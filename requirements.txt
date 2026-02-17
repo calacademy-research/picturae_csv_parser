@@ -7,7 +7,7 @@ ExifRead~=3.0.0
 filetype~=1.2.0
 idna==3.7
 iniconfig==1.1.1
-packaging==21.3
+packaging>=24.0
 parsing
 Paste==3.4.4
 pipreqs==0.4.13
@@ -16,24 +16,25 @@ pyparsing~=3.0.9
 pytest~=8.4.2
 pytz~=2024.2
 requests==2.32.4
+geopandas~=1.1.2
 sh~=2.0.4
 six==1.16.0
 toml==0.10.2
-urllib3==2.5.0
+urllib3==2.6.3
 yarg==0.1.9
 mysql-connector-python~=9.1.0
-Pillow~=10.3.0
+Pillow~=12.1.1
 anytree~=2.9.0
 colorama~=0.4.6
 pathlib2~=2.3.7
 defusedxml~=0.7.1
-cffi~=1.15.1
+cffi>=2.0.0
 future~=1.0.0
 ipython~=8.10.0
-pip~=23.3.2
+pip~=26.0
 panel~=0.14.3
-wheel~=0.44.0
-cryptography~=44.0.1
+wheel~=0.46.2
+cryptography~=46.0.5
 docutils~=0.18.1
 sphinx~=5.0.2
 tornado~=6.5
@@ -59,4 +60,3 @@ typing_extensions~=4.14.0
 coordinate-parser~=0.1.1
 
 # pip install "git+https://github.com/calacademy-research/label_reconciliations.git@master"
-

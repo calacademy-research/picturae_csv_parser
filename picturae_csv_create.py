@@ -22,6 +22,7 @@ import math
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import geopandas as gpd
 
 starting_time_stamp = datetime.now()
 
@@ -655,13 +656,6 @@ class CsvCreatePicturae:
         Requires: geopandas (uses Natural Earth lowres dataset bundled with geopandas)
         """
 
-        try:
-            import geopandas as gpd
-        except Exception as e:
-            raise ImportError(
-                "This function requires geopandas (no hardcoded fallback). "
-                "Install with: pip install geopandas"
-            ) from e
 
         out = df.copy()
 
