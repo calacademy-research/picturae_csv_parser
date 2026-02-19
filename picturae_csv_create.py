@@ -557,9 +557,6 @@ class CsvCreatePicturae:
         if message:
             raise ValueError(message.strip())
 
-    # ---------------------------
-    # Hemisphere + coord parsing
-    # ---------------------------
 
     def safe_parse_coord(
         self,
@@ -788,7 +785,7 @@ class CsvCreatePicturae:
                 country_col="Country",
                 hemisphere_col="hemisphere",
                 assignable_col="assign_hemisphere",
-                aliases=None,
+                aliases={"United States": "United States of America"},
                 add_debug_cols=False,
             )
             self.record_full["hemisphere"] = hemi_df["hemisphere"]
@@ -817,15 +814,20 @@ class CsvCreatePicturae:
                 axis=1,
             )
 
-        return self.record_full[[c for c in [
-            "Country",
-            "hemisphere",
-            "assign_hemisphere",
-            lat_col,
-            "latitude_numeric",
-            lon_col,
-            "longitude_numeric",
-        ] if c in self.record_full.columns]].copy()
+        insert_after = "coordinate_format"
+        new_cols = ["hemisphere", "assign_hemisphere", "latitude_numeric", "longitude_numeric"]
+
+        # inserting columns in the right location after existing coord details
+        cols = list(self.record_full.columns)
+        present_new = [c for c in new_cols if c in self.record_full.columns]
+        base = [c for c in cols if c not in present_new]
+
+        i = base.index(insert_after) + 1 if insert_after in base else len(base)
+        cols = base[:i] + present_new + base[i:]
+
+        self.record_full = self.record_full.reindex(columns=cols)
+
+        return self.record_full.copy()
 
     def taxon_concat(self, row):
         """taxon_concat:
