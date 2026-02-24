@@ -24,9 +24,11 @@ import numpy as np
 from datetime import datetime
 import geopandas as gpd
 import geodatasets
+from postGIS.post_gis_search import GadmLookup
 
 
 starting_time_stamp = datetime.now()
+
 
 
 class IncorrectTaxonError(Exception):
@@ -829,6 +831,94 @@ class CsvCreatePicturae:
 
         return self.record_full.copy()
 
+    def add_gadm_coord_checks(self):
+        """
+        Passive coord QA check:
+          - reverse-looks up GADM country/admin1 from numeric coordinates
+          - sets `coord_admin_check_pass`
+          - uses GadmLookup class for normalization/fuzzy matching
+        """
+
+        required_cols = ["latitude_numeric", "longitude_numeric"]
+        if not all(c in self.record_full.columns for c in required_cols):
+            self.logger.info("GADM coord check skipped: numeric coordinate columns not present.")
+            return
+
+        new_cols = [
+            "gadm_country",
+            "gadm_admin1",
+            "gadm_lookup_found",
+            "coord_admin_check_pass",
+        ]
+        for c in new_cols:
+            if c not in self.record_full.columns:
+                self.record_full[c] = ""
+
+        valid_mask = (
+                pd.to_numeric(self.record_full["latitude_numeric"], errors="coerce").notna()
+                & pd.to_numeric(self.record_full["longitude_numeric"], errors="coerce").notna()
+        )
+
+        if not valid_mask.any():
+            self.logger.info("GADM coord check skipped: no valid numeric coordinates.")
+            return
+
+        lookup = None
+        try:
+            lookup = GadmLookup(
+                host="localhost",
+                dbname="gis",
+                user="postgres",
+                password="postgres",  # replace if needed
+                port=5432,
+                adm1_table="gadm_410_1",  # verify with \dt
+            )
+
+            for idx, row in self.record_full.loc[valid_mask].iterrows():
+                lat = pd.to_numeric(row.get("latitude_numeric"), errors="coerce")
+                lon = pd.to_numeric(row.get("longitude_numeric"), errors="coerce")
+
+                result = lookup.lookup_admin_div(lat=lat, lon=lon)
+
+                if not result:
+                    self.record_full.loc[idx, "gadm_lookup_found"] = False
+                    self.record_full.loc[idx, "coord_admin_check_pass"] = False
+                    continue
+
+                self.record_full.loc[idx, "gadm_country"] = result.get("gadm_country", "")
+                self.record_full.loc[idx, "gadm_admin1"] = result.get("gadm_admin1", "")
+                self.record_full.loc[idx, "gadm_lookup_found"] = True
+
+                passed = lookup.validate_country_admin1(
+                    declared_country=row.get("Country", ""),
+                    declared_state=row.get("State", ""),
+                    gadm_result=result,
+                )
+
+                self.record_full.loc[idx, "coord_admin_check_pass"] = passed
+
+        except Exception as e:
+            self.logger.warning(f"GADM coord check skipped due to DB/query error: {e}")
+        finally:
+            if lookup is not None:
+                lookup.close()
+
+        insert_after = "longitude_numeric"
+        add_cols = ["gadm_country", "gadm_admin1", "gadm_lookup_found", "coord_admin_check_pass"]
+
+        cols = list(self.record_full.columns)
+        present_new = [c for c in add_cols if c in cols]
+        base = [c for c in cols if c not in present_new]
+
+        i = base.index(insert_after) + 1 if insert_after in base else len(base)
+        self.record_full = self.record_full.reindex(columns=base[:i] + present_new + base[i:])
+
+        found_ct = (self.record_full["gadm_lookup_found"].astype(str) == "True").sum()
+        pass_ct = (self.record_full["coord_admin_check_pass"].astype(str) == "True").sum()
+        fail_ct = (self.record_full["coord_admin_check_pass"].astype(str) == "False").sum()
+
+        self.logger.info(f"GADM coord check complete: found={found_ct}, pass={pass_ct}, fail={fail_ct}")
+
     def taxon_concat(self, row):
         """taxon_concat:
                 parses taxon columns to check taxon database, adds the Genus species, ranks, and Epithets,
@@ -1001,6 +1091,9 @@ class CsvCreatePicturae:
 
         # self clean lat long:
         self.process_lat_long_frame()
+
+        # reverse geocode coords against GADM and flag admin mismatches
+        self.add_gadm_coord_checks()
 
         # converting hybrid column to true boolean
         self.record_full['Hybrid'] = self.record_full['Hybrid'].apply(str_to_bool)
