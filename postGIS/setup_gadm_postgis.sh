@@ -4,7 +4,8 @@ set -euo pipefail
 # =========================
 # Config (edit these)
 # =========================
-GDB_PATH="${1:-/Users/mdelaroca/Documents/sandbox_db/specify-sandbox/picturae_batch_wrangler/postGIS/gadm_410.gdb}"  # pass path as arg, or defaults
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+GDB_PATH="${1:-"$SCRIPT_DIR/gadm_410.gdb"}"
 PG_CONTAINER="gadm-postgis"
 PG_DB="gis"
 PG_USER="postgres"
@@ -16,9 +17,14 @@ PG_PORT="5432"
 # =========================
 if [ ! -d "$GDB_PATH" ]; then
   echo "ERROR: GDB folder not found: $GDB_PATH"
-  echo "Usage: $0 /Users/mdelaroca/Documents/sandbox_db/specify-sandbox/picturae_batch_wrangler/postGIS/gadm_410.gdb"
+  echo "Defaulted to script directory:"
+  echo "  $SCRIPT_DIR/gadm_410.gdb"
+  echo "Or pass it explicitly:"
+  echo "  Usage: $0 /absolute/path/to/gadm_410.gdb"
   exit 1
 fi
+
+echo "Using GDB: $GDB_PATH"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker is required"
