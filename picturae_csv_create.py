@@ -864,14 +864,15 @@ class CsvCreatePicturae:
             return
 
         lookup = None
+
         try:
             lookup = GadmLookup(
                 host="localhost",
                 dbname="gis",
                 user="postgres",
-                password="postgres",  # replace if needed
+                password="postgres",
                 port=5432,
-                adm1_table="gadm_410_1",  # verify with \dt
+                adm1_table="public.gadm",  # verify with \dt
             )
 
             for idx, row in self.record_full.loc[valid_mask].iterrows():
@@ -879,7 +880,7 @@ class CsvCreatePicturae:
                 lon = pd.to_numeric(row.get("longitude_numeric"), errors="coerce")
 
                 result = lookup.lookup_admin_div(lat=lat, lon=lon)
-
+                print(result)
                 if not result:
                     self.record_full.loc[idx, "gadm_lookup_found"] = False
                     self.record_full.loc[idx, "coord_admin_check_pass"] = False
@@ -898,7 +899,7 @@ class CsvCreatePicturae:
                 self.record_full.loc[idx, "coord_admin_check_pass"] = passed
 
         except Exception as e:
-            self.logger.warning(f"GADM coord check skipped due to DB/query error: {e}")
+            raise ValueError(f"GADM coord check skipped due to DB/query error: {e}")
         finally:
             if lookup is not None:
                 lookup.close()

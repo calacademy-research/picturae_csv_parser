@@ -13,7 +13,7 @@ class GadmLookup:
         user="postgres",
         password="postgres",
         port=5432,
-        adm1_table="gadm_410_1",
+        adm1_table="public.gadm",
         country_aliases=None,
         state_aliases=None,
     ):
@@ -57,10 +57,10 @@ class GadmLookup:
         with self.conn.cursor() as cur:
             sql = f"""
             SELECT
-                "NAME_0" AS country_name,
-                "NAME_1" AS admin1_name,
-                "GID_0"  AS country_gid,
-                "GID_1"  AS admin1_gid
+                "name_0" AS country_name,
+                "name_1" AS admin1_name,
+                "gid_0"  AS country_gid,
+                "gid_1"  AS admin1_gid
             FROM {self.adm1_table}
             WHERE ST_Intersects(
                 geom,
