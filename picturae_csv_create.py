@@ -880,7 +880,6 @@ class CsvCreatePicturae:
                 lon = pd.to_numeric(row.get("longitude_numeric"), errors="coerce")
 
                 result = lookup.lookup_admin_div(lat=lat, lon=lon)
-                print(result)
                 if not result:
                     self.record_full.loc[idx, "gadm_lookup_found"] = False
                     self.record_full.loc[idx, "coord_admin_check_pass"] = False
@@ -1085,7 +1084,7 @@ class CsvCreatePicturae:
             self.record_full[colname] = self.record_full[colname].apply(
                 lambda x: replace_apostrophes(x).strip() if isinstance(x, str) else x
             )
-        # filling in missing family with existin genera in DB
+        # filling in missing family with existing genera in DB
         self.backfill_tax_family()
         # flagging missing data
         self.flag_missing_data()
