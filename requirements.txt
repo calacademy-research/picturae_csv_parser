@@ -50,6 +50,7 @@ importlib-metadata~=8.7.0
 wcwidth~=0.2.5
 atomicwrites~=1.4.0
 pexpect~=4.8.0
+psycopg2-binary~=2.9.11
 numpy~=2.1
 brotli~=1.0.9
 chardet~=4.0.0
