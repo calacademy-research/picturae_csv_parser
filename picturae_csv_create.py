@@ -468,6 +468,100 @@ class CsvCreatePicturae:
         #
         # self.logger.info("merged csv written")
 
+    def fill_in_century(self):
+        """Fill 2-digit start_date_year values using collector history and flag unclear centuries."""
+
+        if "unclear_century" not in self.record_full.columns:
+            self.record_full["unclear_century"] = False
+
+        # cache repeated collector lookups
+        collector_cache = {}
+
+        # only rows where len != 4
+        year_mask = ~self.record_full["start_date_year"].astype(str).str.strip().str.len().isin([0, 4])
+
+        for idx, row in self.record_full.loc[year_mask].iterrows():
+            raw_year = row.get("start_date_year", "")
+            raw_year = "" if pd.isna(raw_year) else str(raw_year).strip()
+
+            # default
+            self.record_full.loc[idx, "unclear_century"] = False
+
+            if raw_year == "" or not raw_year.isdigit():
+                continue
+
+            if len(raw_year) != 2:
+                self.record_full.loc[idx, "unclear_century"] = True
+                continue
+
+            first = row.get("collector_first_name1", "")
+            last = row.get("collector_last_name1", "")
+            middle = row.get("collector_middle_name1", "")
+
+            first = "" if pd.isna(first) else str(first).strip()
+            last = "" if pd.isna(last) else str(last).strip()
+            middle = "" if pd.isna(middle) else str(middle).strip()
+
+            # strip titles from first/last if present
+            first_name, title_first = assign_collector_titles(
+                first_last='first',
+                name=first,
+                config=self.picturae_config
+            )
+
+            last_name, title_last = assign_collector_titles(
+                first_last='last',
+                name=last,
+                config=self.picturae_config
+            )
+
+            title = title_first if pd.notna(title_first) and str(title_first).strip() != "" else title_last
+
+            first_name = "" if pd.isna(first_name) else str(first_name).strip()
+            last_name = "" if pd.isna(last_name) else str(last_name).strip()
+            title = "" if pd.isna(title) else str(title).strip()
+
+
+            # cannot infer without at least a first/last name
+            if first_name == "" and last_name == "":
+                self.record_full.loc[idx, "unclear_century"] = True
+                continue
+
+            cache_key = (
+                first_name or None,
+                last_name or None,
+                middle or None,
+                title or None,
+            )
+
+            if cache_key not in collector_cache:
+                collector_cache[cache_key] = self.sql_csv_tools.get_agent_collecting_range(
+                    first_name=first_name or None,
+                    last_name=last_name or None,
+                    middle_initial=middle or None,
+                    title=title or None
+                )
+
+            max_year, min_year, median_year = collector_cache[cache_key]
+
+            if max_year is None and min_year is None and median_year is None:
+                self.record_full.loc[idx, "unclear_century"] = True
+                continue
+
+
+            centuries = {
+                str(int(min_year)).zfill(4)[:2],
+                str(int(max_year)).zfill(4)[:2],
+                str(int(median_year)).zfill(4)[:2],
+            }
+
+            if len(centuries) >= 1:
+                century_prefix = next(iter(centuries))
+                self.record_full.loc[idx, "start_date_year"] = f"{century_prefix}{raw_year}"
+                self.record_full.loc[idx, "unclear_century"] = False
+            else:
+                self.record_full.loc[idx, "unclear_century"] = True
+
     def missing_data_masks(self):
         """missing_data_masks: create masks and filtered csvs for each kind of relevant missing data to flag.
             returns:
@@ -1073,6 +1167,8 @@ class CsvCreatePicturae:
         """parses and cleans dataframe columns until ready for upload.
             runs dependent function taxon concat
         """
+        self.fill_in_century()
+
         # concatenate date
 
         for col_name in list(["start", "end"]):

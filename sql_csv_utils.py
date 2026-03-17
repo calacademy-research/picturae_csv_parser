@@ -1,5 +1,6 @@
 from specify_db import SpecifyDb
 import logging
+from statistics import median
 
 class DatabaseConnectionError(Exception):
     pass
@@ -52,6 +53,101 @@ class SqlCsvTools:
     def commit(self):
         """standard db commit"""
         return self.specify_db_connection.commit()
+
+
+    def check_agent_name_sql(self, first_name: str, last_name: str, middle_initial: str, title: str):
+        """create_name_sql: create a custom sql string, based on number of non-na arguments, the
+                            database does not recognize empty strings '' and NA as equivalent.
+                            Has conditional to ensure the first statement always starts with WHERE
+            args:
+                first_name: first name of agent
+                last_name: last name of agent
+                middle_initial: middle initial of agent
+                title: agent's title. (mr, ms, dr. etc..)
+        """
+        sql = f"""
+                SELECT AgentID FROM agent
+                WHERE
+                    (FirstName = {first_name} OR ({first_name} IS NULL AND FirstName IS NULL))
+                    AND (LastName = {last_name} OR ({last_name} IS NULL AND LastName IS NULL))
+                    AND (MiddleInitial = {middle_initial} OR ({middle_initial} IS NULL AND MiddleInitial IS NULL))
+                    AND (Title = {title} OR ({title} IS NULL AND Title IS NULL))
+            """
+
+        result = self.get_record(sql)
+
+        if not result:
+            return None
+
+        return result[0] if isinstance(result, tuple) else result
+
+
+
+
+    def get_collecting_event_ids_by_agent_id(self, agent_id: int):
+        """
+        Return distinct CollectingEventID values for an AgentID from collector.
+        """
+        sql = f"""
+            SELECT DISTINCT CollectingEventID
+            FROM collector
+            WHERE AgentID = {agent_id}
+              AND CollectingEventID IS NOT NULL
+        """
+        rows = self.get_records(sql)
+        return [row[0] for row in rows if row and row[0] is not None]
+
+
+
+    def get_agent_collecting_range(self, first_name: str, last_name: str, middle_initial: str, title: str):
+        """
+        Given a single full-name string, find the AgentID, then look up
+        CollectingEventID values in collector, then retrieve StartDate from
+        collectingevent and return min / median / max 4-digit year.
+
+        Returns a dict.
+        """
+
+        agent_id = self.check_agent_name_sql(
+            first_name=first_name,
+            last_name=last_name,
+            middle_initial=middle_initial,
+            title=title
+        )
+
+        max_year = None
+        min_year = None
+        median_year = None
+
+        if agent_id is None:
+            return max_year, min_year, median_year
+
+        collecting_event_ids = self.get_collecting_event_ids_by_agent_id(agent_id)
+
+        if not collecting_event_ids:
+            return max_year, min_year, median_year
+
+        placeholders = ", ".join(["%s"] * len(collecting_event_ids))
+        sql = f"""
+            SELECT YEAR(StartDate) AS StartDateYear
+            FROM collectingevent
+            WHERE CollectingEventID IN ({placeholders})
+              AND StartDate IS NOT NULL
+              AND YEAR(StartDate) IS NOT NULL
+        """
+
+        rows = self.get_records(sql)
+        years = sorted(row[0] for row in rows if row and row[0] is not None)
+
+        if not years:
+            return max_year, min_year, median_year
+
+        median_year = median(years)
+        if isinstance(median_year, float) and median_year.is_integer():
+            median_year = int(median_year)
+            min_year = min(years)
+            max_year = max(years)
+            return max_year, min_year, median_year
 
 
     def get_one_hybrid(self, match, fullname):
