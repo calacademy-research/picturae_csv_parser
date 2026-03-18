@@ -619,9 +619,14 @@ class CsvCreatePicturae:
         missing_rank_csv, missing_family_csv, missing_geography_csv, \
             missing_label_csv, invalid_date_csv, invalid_verbatim_csv = self.missing_data_masks()
 
-        data_flag_dict = {"missing_rank": missing_rank_csv, "missing_family": missing_family_csv,
-                          "missing_geography": missing_geography_csv, "missing_label": missing_label_csv,
-                          "invalid_date": invalid_date_csv, "invalid_verbatim": invalid_verbatim_csv}
+        data_flag_dict = {
+            "missing_rank": missing_rank_csv,
+            "missing_family": missing_family_csv,
+            "missing_geography": missing_geography_csv,
+            "missing_label": missing_label_csv,
+            "invalid_date": invalid_date_csv,
+            "invalid_verbatim": invalid_verbatim_csv,
+        }
 
         message_dict = {
             "missing_rank": "Taxonomic names with 2 missing ranks at covers:",
@@ -631,24 +636,36 @@ class CsvCreatePicturae:
             "invalid_date": "Invalid dates at:",
             "invalid_verbatim": "Verbatim date too long at:",
         }
-        # flag missing and incorrect data
-        message = ""
+
+        flagged_data = {}
+        message_parts = []
+
         for key, csv_data in data_flag_dict.items():
             if key == "missing_label" and self.covered_ignore:
                 continue
-            if len(csv_data) > 0:
-                csv_data = csv_data.sort_values(by=['CSV_batch', 'CatalogNumber'])
-                if key in ["missing_rank", "missing_family"]:
-                    item_set = sorted(set(csv_data['folder_barcode']))
-                    batch_set = sorted(set(csv_data['CSV_batch']))
-                else:
-                    item_set = sorted(set(csv_data['CatalogNumber']))
-                    batch_set = sorted(set(csv_data['CSV_batch']))
+            if len(csv_data) == 0:
+                continue
 
-                message += message_dict[key]
-                message += f" {item_set} in batches {batch_set}\n\n"
-        if message:
-            raise ValueError(message.strip())
+            csv_data = csv_data.sort_values(by=["CSV_batch", "CatalogNumber"])
+            id_col = "folder_barcode" if key in ["missing_rank", "missing_family"] else "CatalogNumber"
+
+            batch_to_items = (
+                csv_data.groupby("CSV_batch")[id_col]
+                .apply(lambda s: sorted(set(s.dropna().astype(str))))
+                .to_dict()
+            )
+
+            flagged_data[key] = batch_to_items
+
+            formatted_batches = "\n".join(
+                f"  {batch}: {items}"
+                for batch, items in batch_to_items.items()
+            )
+
+            message_parts.append(f"{message_dict[key]}\n{formatted_batches}")
+
+        if message_parts:
+            raise ValueError("\n\n".join(message_parts))
 
 
     def safe_parse_coord(
