@@ -474,17 +474,18 @@ class CsvCreatePicturae:
         if "unclear_century" not in self.record_full.columns:
             self.record_full["unclear_century"] = False
 
-        # cache repeated collector lookups
         collector_cache = {}
 
-        # only rows where len != 4
         year_mask = ~self.record_full["start_date_year"].astype(str).str.strip().str.len().isin([0, 4])
 
         for idx, row in self.record_full.loc[year_mask].iterrows():
             raw_year = row.get("start_date_year", "")
             raw_year = "" if pd.isna(raw_year) else str(raw_year).strip()
 
-            # default
+            if len(raw_year) == 1 and raw_year.isdigit():
+                raw_year = raw_year.zfill(2)
+                self.record_full.loc[idx, "start_date_year"] = raw_year
+
             self.record_full.loc[idx, "unclear_century"] = False
 
             if raw_year == "" or not raw_year.isdigit():
@@ -502,7 +503,6 @@ class CsvCreatePicturae:
             last = "" if pd.isna(last) else str(last).strip()
             middle = "" if pd.isna(middle) else str(middle).strip()
 
-            # strip titles from first/last if present
             first_name, title_first = assign_collector_titles(
                 first_last='first',
                 name=first,
@@ -521,8 +521,6 @@ class CsvCreatePicturae:
             last_name = "" if pd.isna(last_name) else str(last_name).strip()
             title = "" if pd.isna(title) else str(title).strip()
 
-
-            # cannot infer without at least a first/last name
             if first_name == "" and last_name == "":
                 self.record_full.loc[idx, "unclear_century"] = True
                 continue
@@ -547,7 +545,6 @@ class CsvCreatePicturae:
             if max_year is None and min_year is None and median_year is None:
                 self.record_full.loc[idx, "unclear_century"] = True
                 continue
-
 
             centuries = {
                 str(int(min_year)).zfill(4)[:2],
