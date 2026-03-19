@@ -581,7 +581,7 @@ class CsvCreatePicturae:
 
         # flags if missing higher geography
         missing_geography = (self.record_full['Country'].isna() | (self.record_full['Country'] == '') |
-                             (self.record_full['Country'].isnull()))
+                             (self.record_full['Country'].isnull()) | (self.record_full['Country'] == 'X'))
 
         missing_geography_csv = self.record_full.loc[missing_geography]
 
