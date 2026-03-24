@@ -40,9 +40,10 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, min_digits=7):
+    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, verify_region, min_digits=7,):
         self.tnrs_ignore = str_to_bool(tnrs_ignore)
         self.covered_ignore = str_to_bool(covered_ignore)
+        self.verify_region = verify_region
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
         self.image_client = ImageClient(config=self.picturae_config)
@@ -1001,6 +1002,7 @@ class CsvCreatePicturae:
                     declared_country=row.get("Country", ""),
                     declared_state=row.get("State", ""),
                     gadm_result=result,
+                    verify_region=self.verify_region
                 )
 
                 self.record_full.loc[idx, "coord_admin_check_pass"] = passed
@@ -1608,9 +1610,14 @@ if __name__ == "__main__":
                                                                               "useful for setting a threshold"
                                                                               " for duplicates in the notes section")
 
+    parser.add_argument("-vr", "--verify_region", nargs="?", required=False,
+                        help="verify region or country, default to country, input boolean True to change",
+                        default=False)
+
     args = parser.parse_args()
 
     pic_config = get_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
-                                              tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore)
+                                              tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore,
+                                              verify_region=args.verify_region)
