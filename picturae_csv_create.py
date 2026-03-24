@@ -40,9 +40,10 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, min_digits=7):
+    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, verify_region, min_digits=7,):
         self.tnrs_ignore = str_to_bool(tnrs_ignore)
         self.covered_ignore = str_to_bool(covered_ignore)
+        self.verify_region = verify_region
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
         self.image_client = ImageClient(config=self.picturae_config)
@@ -468,6 +469,97 @@ class CsvCreatePicturae:
         #
         # self.logger.info("merged csv written")
 
+    def fill_in_century(self):
+        """Fill 2-digit start_date_year values using collector history and flag unclear centuries."""
+
+        if "unclear_century" not in self.record_full.columns:
+            self.record_full["unclear_century"] = False
+
+        collector_cache = {}
+
+        year_mask = ~self.record_full["start_date_year"].astype(str).str.strip().str.len().isin([0, 4])
+
+        for idx, row in self.record_full.loc[year_mask].iterrows():
+            raw_year = row.get("start_date_year", "")
+            raw_year = "" if pd.isna(raw_year) else str(raw_year).strip()
+
+            if len(raw_year) == 1 and raw_year.isdigit():
+                raw_year = raw_year.zfill(2)
+                self.record_full.loc[idx, "start_date_year"] = raw_year
+
+            self.record_full.loc[idx, "unclear_century"] = False
+
+            if raw_year == "" or not raw_year.isdigit():
+                continue
+
+            if len(raw_year) != 2:
+                self.record_full.loc[idx, "unclear_century"] = True
+                continue
+
+            first = row.get("collector_first_name1", "")
+            last = row.get("collector_last_name1", "")
+            middle = row.get("collector_middle_name1", "")
+
+            first = "" if pd.isna(first) else str(first).strip()
+            last = "" if pd.isna(last) else str(last).strip()
+            middle = "" if pd.isna(middle) else str(middle).strip()
+
+            first_name, title_first = assign_collector_titles(
+                first_last='first',
+                name=first,
+                config=self.picturae_config
+            )
+
+            last_name, title_last = assign_collector_titles(
+                first_last='last',
+                name=last,
+                config=self.picturae_config
+            )
+
+            title = title_first if pd.notna(title_first) and str(title_first).strip() != "" else title_last
+
+            first_name = "" if pd.isna(first_name) else str(first_name).strip()
+            last_name = "" if pd.isna(last_name) else str(last_name).strip()
+            title = "" if pd.isna(title) else str(title).strip()
+
+            if first_name == "" and last_name == "":
+                self.record_full.loc[idx, "unclear_century"] = True
+                continue
+
+            cache_key = (
+                first_name or None,
+                last_name or None,
+                middle or None,
+                title or None,
+            )
+
+            if cache_key not in collector_cache:
+                collector_cache[cache_key] = self.sql_csv_tools.get_agent_collecting_range(
+                    first_name=first_name or None,
+                    last_name=last_name or None,
+                    middle_initial=middle or None,
+                    title=title or None
+                )
+
+            max_year, min_year, median_year = collector_cache[cache_key]
+
+            if max_year is None and min_year is None and median_year is None:
+                self.record_full.loc[idx, "unclear_century"] = True
+                continue
+
+            centuries = {
+                str(int(min_year)).zfill(4)[:2],
+                str(int(max_year)).zfill(4)[:2],
+                str(int(median_year)).zfill(4)[:2],
+            }
+
+            if len(centuries) >= 1:
+                century_prefix = next(iter(centuries))
+                self.record_full.loc[idx, "start_date_year"] = f"{century_prefix}{raw_year}"
+                self.record_full.loc[idx, "unclear_century"] = False
+            else:
+                self.record_full.loc[idx, "unclear_century"] = True
+
     def missing_data_masks(self):
         """missing_data_masks: create masks and filtered csvs for each kind of relevant missing data to flag.
             returns:
@@ -490,7 +582,7 @@ class CsvCreatePicturae:
 
         # flags if missing higher geography
         missing_geography = (self.record_full['Country'].isna() | (self.record_full['Country'] == '') |
-                             (self.record_full['Country'].isnull()))
+                             (self.record_full['Country'].isnull()) | (self.record_full['Country'] == 'X'))
 
         missing_geography_csv = self.record_full.loc[missing_geography]
 
@@ -528,9 +620,14 @@ class CsvCreatePicturae:
         missing_rank_csv, missing_family_csv, missing_geography_csv, \
             missing_label_csv, invalid_date_csv, invalid_verbatim_csv = self.missing_data_masks()
 
-        data_flag_dict = {"missing_rank": missing_rank_csv, "missing_family": missing_family_csv,
-                          "missing_geography": missing_geography_csv, "missing_label": missing_label_csv,
-                          "invalid_date": invalid_date_csv, "invalid_verbatim": invalid_verbatim_csv}
+        data_flag_dict = {
+            "missing_rank": missing_rank_csv,
+            "missing_family": missing_family_csv,
+            "missing_geography": missing_geography_csv,
+            "missing_label": missing_label_csv,
+            "invalid_date": invalid_date_csv,
+            "invalid_verbatim": invalid_verbatim_csv,
+        }
 
         message_dict = {
             "missing_rank": "Taxonomic names with 2 missing ranks at covers:",
@@ -540,24 +637,36 @@ class CsvCreatePicturae:
             "invalid_date": "Invalid dates at:",
             "invalid_verbatim": "Verbatim date too long at:",
         }
-        # flag missing and incorrect data
-        message = ""
+
+        flagged_data = {}
+        message_parts = []
+
         for key, csv_data in data_flag_dict.items():
             if key == "missing_label" and self.covered_ignore:
                 continue
-            if len(csv_data) > 0:
-                csv_data = csv_data.sort_values(by=['CSV_batch', 'CatalogNumber'])
-                if key in ["missing_rank", "missing_family"]:
-                    item_set = sorted(set(csv_data['folder_barcode']))
-                    batch_set = sorted(set(csv_data['CSV_batch']))
-                else:
-                    item_set = sorted(set(csv_data['CatalogNumber']))
-                    batch_set = sorted(set(csv_data['CSV_batch']))
+            if len(csv_data) == 0:
+                continue
 
-                message += message_dict[key]
-                message += f" {item_set} in batches {batch_set}\n\n"
-        if message:
-            raise ValueError(message.strip())
+            csv_data = csv_data.sort_values(by=["CSV_batch", "CatalogNumber"])
+            id_col = "folder_barcode" if key in ["missing_rank", "missing_family"] else "CatalogNumber"
+
+            batch_to_items = (
+                csv_data.groupby("CSV_batch")[id_col]
+                .apply(lambda s: sorted(set(s.dropna().astype(str))))
+                .to_dict()
+            )
+
+            flagged_data[key] = batch_to_items
+
+            formatted_batches = "\n".join(
+                f"  {batch}: {items}"
+                for batch, items in batch_to_items.items()
+            )
+
+            message_parts.append(f"{message_dict[key]}\n{formatted_batches}")
+
+        if message_parts:
+            raise ValueError("\n\n".join(message_parts))
 
 
     def safe_parse_coord(
@@ -893,6 +1002,7 @@ class CsvCreatePicturae:
                     declared_country=row.get("Country", ""),
                     declared_state=row.get("State", ""),
                     gadm_result=result,
+                    verify_region=self.verify_region
                 )
 
                 self.record_full.loc[idx, "coord_admin_check_pass"] = passed
@@ -1073,6 +1183,8 @@ class CsvCreatePicturae:
         """parses and cleans dataframe columns until ready for upload.
             runs dependent function taxon concat
         """
+        self.fill_in_century()
+
         # concatenate date
 
         for col_name in list(["start", "end"]):
@@ -1498,9 +1610,14 @@ if __name__ == "__main__":
                                                                               "useful for setting a threshold"
                                                                               " for duplicates in the notes section")
 
+    parser.add_argument("-vr", "--verify_region", nargs="?", required=False,
+                        help="verify region or country, default to country, input boolean True to change",
+                        default=False)
+
     args = parser.parse_args()
 
     pic_config = get_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
-                                              tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore)
+                                              tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore,
+                                              verify_region=args.verify_region)
