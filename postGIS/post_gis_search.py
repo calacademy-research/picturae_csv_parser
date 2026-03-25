@@ -39,6 +39,8 @@ class GadmLookup:
             "PRC": "China",
             "People's Republic of China": "China",
             "People’s Republic of China": "China",
+            "South Korea": "Korea, Republic of",
+            "North Macedonia": "Macedonia, The Former Yugoslav Republic of",
         }
 
         self.state_aliases = state_aliases or {
