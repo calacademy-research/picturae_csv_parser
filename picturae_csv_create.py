@@ -1039,11 +1039,11 @@ class CsvCreatePicturae:
         if "coord_admin_check_pass" not in self.record_full.columns or "sheet_notes" not in self.record_full.columns:
             return
 
-        pass_mask = self.record_full["coord_admin_check_pass"].isin([True, "True", 1])
+        fail_mask = self.record_full["coord_admin_check_pass"].isin([False, "False", 0])
         existing_notes = self.record_full["sheet_notes"].fillna("").astype(str).str.strip()
         already_has_note = existing_notes.str.contains(re.escape(note), na=False)
 
-        update_mask = pass_mask & ~already_has_note
+        update_mask = fail_mask & ~already_has_note
 
         self.record_full.loc[update_mask, "sheet_notes"] = np.where(
             existing_notes.loc[update_mask] == "",

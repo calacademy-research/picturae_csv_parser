@@ -48,6 +48,10 @@ class GadmLookup:
             "Inner Mongolia Autonomous Region": "Nei Mongol",
         }
 
+        self.region_exception_countries = {
+            "Taiwan": "country_only"
+        }
+
     def close(self):
         try:
             self.conn.close()
@@ -59,6 +63,7 @@ class GadmLookup:
             return None
         if pd.isna(lat) or pd.isna(lon):
             return None
+
 
         with self.conn.cursor() as cur:
             sql = f"""
@@ -166,28 +171,20 @@ class GadmLookup:
         if not gadm_result:
             return False
 
-        # Raw from GADM
         gadm_country_raw = gadm_result.get("gadm_country", "")
         gadm_admin1_raw = gadm_result.get("gadm_admin1", "")
 
-        # Canonicalize BOTH sides (helps when you add more aliases later)
         declared_country_cmp = self.canonical_country(declared_country)
         declared_state_cmp = self.canonical_state(declared_state)
 
         gadm_country_cmp = self.canonical_country(gadm_country_raw)
         gadm_admin1_cmp = self.canonical_state(gadm_admin1_raw)
 
-        # ---- Taiwan special-case ----
-        # Your DB may store: Country=China, State=Taiwan
-        # GADM returns: Country=Taiwan (as a country)
         decl_country_norm = self.normalize_name(declared_country_cmp)
         decl_state_norm = self.normalize_name(declared_state_cmp)
         gadm_country_norm = self.normalize_name(gadm_country_cmp)
 
         if gadm_country_norm == "taiwan":
-            # Accept either:
-            #  1) declared country is Taiwan
-            #  2) declared country is China and declared state is Taiwan
             if decl_country_norm == "taiwan":
                 country_ok = True
             elif decl_country_norm == "china" and decl_state_norm in {
@@ -199,11 +196,15 @@ class GadmLookup:
         else:
             country_ok = self.fuzzy_match(declared_country_cmp, gadm_country_cmp, threshold=0.90)
 
-        # If caller only wants country check, stop here
         if not verify_region:
             return bool(country_ok)
 
-        # Only require admin1 if declared_state has a value
+        if not country_ok:
+            return False
+
+        if self.region_exception_countries.get(self.canonical_country(declared_country_cmp)) == "country_only":
+            return True
+
         state_has_value = self.normalize_name(declared_state_cmp) != ""
         if state_has_value:
             state_ok = self.fuzzy_match(declared_state_cmp, gadm_admin1_cmp, threshold=0.85)
