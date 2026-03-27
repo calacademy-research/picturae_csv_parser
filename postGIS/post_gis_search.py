@@ -185,30 +185,29 @@ class GadmLookup:
         gadm_country_norm = self.normalize_name(gadm_country_cmp)
 
         if gadm_country_norm == "taiwan":
-            if decl_country_norm == "taiwan":
-                country_ok = True
-            elif decl_country_norm == "china" and decl_state_norm in {
-                "taiwan", "taiwan province", "province of taiwan"
-            }:
-                return True
-            else:
-                country_ok = self.fuzzy_match(declared_country_cmp, gadm_country_cmp, threshold=0.90)
+            country_ok = (
+                    decl_country_norm == "taiwan"
+                    or (
+                            decl_country_norm == "china"
+                            and decl_state_norm in {"taiwan", "taiwan province", "province of taiwan"}
+                    )
+                    or self.fuzzy_match(declared_country_cmp, gadm_country_cmp, threshold=0.90)
+            )
         else:
             country_ok = self.fuzzy_match(declared_country_cmp, gadm_country_cmp, threshold=0.90)
-
-        if not verify_region:
-            return bool(country_ok)
 
         if not country_ok:
             return False
 
-        if self.region_exception_countries.get(self.canonical_country(declared_country_cmp)) == "country_only":
+        if not verify_region:
+            return True
+
+        if self.region_exception_countries.get(gadm_country_cmp) == "country_only":
             return True
 
         state_has_value = self.normalize_name(declared_state_cmp) != ""
-        if state_has_value:
-            state_ok = self.fuzzy_match(declared_state_cmp, gadm_admin1_cmp, threshold=0.85)
-        else:
-            state_ok = True
+        if not state_has_value:
+            return True
 
-        return bool(country_ok and state_ok)
+        state_ok = self.fuzzy_match(declared_state_cmp, gadm_admin1_cmp, threshold=0.85)
+        return bool(state_ok)
