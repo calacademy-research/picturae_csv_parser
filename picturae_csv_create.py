@@ -1029,6 +1029,28 @@ class CsvCreatePicturae:
 
         self.logger.info(f"GADM coord check complete: found={found_ct}, pass={pass_ct}, fail={fail_ct}")
 
+        self.append_coord_verify_note()
+
+
+    def append_coord_verify_note(self):
+        """adds note for out of bounds coordinates to the sheet notes section"""
+        note = "Verify lat/long coordinates or geo name."
+
+        if "coord_admin_check_pass" not in self.record_full.columns or "sheet_notes" not in self.record_full.columns:
+            return
+
+        fail_mask = self.record_full["coord_admin_check_pass"].isin([False, "False", 0])
+        existing_notes = self.record_full["sheet_notes"].fillna("").astype(str).str.strip()
+        already_has_note = existing_notes.str.contains(re.escape(note), na=False)
+
+        update_mask = fail_mask & ~already_has_note
+
+        self.record_full.loc[update_mask, "sheet_notes"] = np.where(
+            existing_notes.loc[update_mask] == "",
+            note,
+            existing_notes.loc[update_mask] + " " + note
+        )
+
     def taxon_concat(self, row):
         """taxon_concat:
                 parses taxon columns to check taxon database, adds the Genus species, ranks, and Epithets,
@@ -1612,7 +1634,7 @@ if __name__ == "__main__":
 
     parser.add_argument("-vr", "--verify_region", nargs="?", required=False,
                         help="verify region or country, default to country, input boolean True to change",
-                        default=False)
+                        default=True)
 
     args = parser.parse_args()
 

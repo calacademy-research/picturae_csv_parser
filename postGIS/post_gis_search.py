@@ -15,10 +15,13 @@ class GadmLookup:
         password="postgres",
         port=5432,
         adm1_table="public.gadm",
+        boundary_tolerance_m=1000,
         country_aliases=None,
         state_aliases=None
     ):
         self.adm1_table = adm1_table
+
+        self.boundary_tolerance_m = boundary_tolerance_m
 
         self.conn = psycopg2.connect(
             host=host,
@@ -39,11 +42,20 @@ class GadmLookup:
             "PRC": "China",
             "People's Republic of China": "China",
             "People’s Republic of China": "China",
+            "South Korea": "Korea, Republic of",
+            "North Macedonia": "Macedonia, The Former Yugoslav Republic of",
         }
 
         self.state_aliases = state_aliases or {
             "Tibet Autonomous Region": "Xizang",
             "Inner Mongolia Autonomous Region": "Nei Mongol",
+            "Cuzco": "Cusco",
+
+
+        }
+
+        self.region_exception_countries = {
+            "Taiwan": "country_only"
         }
 
     def close(self):
@@ -60,19 +72,51 @@ class GadmLookup:
 
         with self.conn.cursor() as cur:
             sql = f"""
+            WITH pt AS (
+                SELECT ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS geom
+            )
             SELECT
                 "name_0" AS country_name,
                 "name_1" AS admin1_name,
                 "gid_0"  AS country_gid,
-                "gid_1"  AS admin1_gid
-            FROM {self.adm1_table}
-            WHERE ST_Intersects(
-                geom,
-                ST_SetSRID(ST_MakePoint(%s, %s), 4326)
-            )
+                "gid_1"  AS admin1_gid,
+                TRUE     AS exact_match,
+                0::double precision AS distance_m
+            FROM {self.adm1_table}, pt
+            WHERE ST_Intersects({self.adm1_table}.geom, pt.geom)
             LIMIT 1;
             """
             cur.execute(sql, (float(lon), float(lat)))
+            row = cur.fetchone()
+
+            if row:
+                return {
+                    "gadm_country": row[0],
+                    "gadm_admin1": row[1],
+                    "gadm_gid_0": row[2],
+                    "gadm_gid_1": row[3],
+                    "exact_match": row[4],
+                    "distance_m": row[5],
+                    "near_boundary": False,
+                }
+
+            sql = f"""
+            WITH pt AS (
+                SELECT ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS geom
+            )
+            SELECT
+                "name_0" AS country_name,
+                "name_1" AS admin1_name,
+                "gid_0"  AS country_gid,
+                "gid_1"  AS admin1_gid,
+                FALSE    AS exact_match,
+                ST_Distance({self.adm1_table}.geom::geography, pt.geom::geography) AS distance_m
+            FROM {self.adm1_table}, pt
+            WHERE ST_DWithin({self.adm1_table}.geom::geography, pt.geom::geography, %s)
+            ORDER BY distance_m
+            LIMIT 1;
+            """
+            cur.execute(sql, (float(lon), float(lat), self.boundary_tolerance_m))
             row = cur.fetchone()
 
         if not row:
@@ -83,6 +127,9 @@ class GadmLookup:
             "gadm_admin1": row[1],
             "gadm_gid_0": row[2],
             "gadm_gid_1": row[3],
+            "exact_match": row[4],
+            "distance_m": row[5],
+            "near_boundary": True,
         }
 
     @staticmethod
@@ -164,48 +211,43 @@ class GadmLookup:
         if not gadm_result:
             return False
 
-        # Raw from GADM
         gadm_country_raw = gadm_result.get("gadm_country", "")
         gadm_admin1_raw = gadm_result.get("gadm_admin1", "")
 
-        # Canonicalize BOTH sides (helps when you add more aliases later)
         declared_country_cmp = self.canonical_country(declared_country)
         declared_state_cmp = self.canonical_state(declared_state)
 
         gadm_country_cmp = self.canonical_country(gadm_country_raw)
         gadm_admin1_cmp = self.canonical_state(gadm_admin1_raw)
 
-        # ---- Taiwan special-case ----
-        # Your DB may store: Country=China, State=Taiwan
-        # GADM returns: Country=Taiwan (as a country)
         decl_country_norm = self.normalize_name(declared_country_cmp)
         decl_state_norm = self.normalize_name(declared_state_cmp)
         gadm_country_norm = self.normalize_name(gadm_country_cmp)
 
         if gadm_country_norm == "taiwan":
-            # Accept either:
-            #  1) declared country is Taiwan
-            #  2) declared country is China and declared state is Taiwan
-            if decl_country_norm == "taiwan":
-                country_ok = True
-            elif decl_country_norm == "china" and decl_state_norm in {
-                "taiwan", "taiwan province", "province of taiwan"
-            }:
-                return True
-            else:
-                country_ok = self.fuzzy_match(declared_country_cmp, gadm_country_cmp, threshold=0.90)
+            country_ok = (
+                    decl_country_norm == "taiwan"
+                    or (
+                            decl_country_norm == "china"
+                            and decl_state_norm in {"taiwan", "taiwan province", "province of taiwan"}
+                    )
+                    or self.fuzzy_match(declared_country_cmp, gadm_country_cmp, threshold=0.90)
+            )
         else:
             country_ok = self.fuzzy_match(declared_country_cmp, gadm_country_cmp, threshold=0.90)
 
-        # If caller only wants country check, stop here
+        if not country_ok:
+            return False
+
         if not verify_region:
-            return bool(country_ok)
+            return True
 
-        # Only require admin1 if declared_state has a value
+        if self.region_exception_countries.get(gadm_country_cmp) == "country_only":
+            return True
+
         state_has_value = self.normalize_name(declared_state_cmp) != ""
-        if state_has_value:
-            state_ok = self.fuzzy_match(declared_state_cmp, gadm_admin1_cmp, threshold=0.85)
-        else:
-            state_ok = True
+        if not state_has_value:
+            return True
 
-        return bool(country_ok and state_ok)
+        state_ok = self.fuzzy_match(declared_state_cmp, gadm_admin1_cmp, threshold=0.85)
+        return bool(state_ok)
