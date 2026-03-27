@@ -15,10 +15,13 @@ class GadmLookup:
         password="postgres",
         port=5432,
         adm1_table="public.gadm",
+        boundary_tolerance_m=1000,
         country_aliases=None,
         state_aliases=None
     ):
         self.adm1_table = adm1_table
+
+        self.boundary_tolerance_m = boundary_tolerance_m
 
         self.conn = psycopg2.connect(
             host=host,
@@ -46,6 +49,9 @@ class GadmLookup:
         self.state_aliases = state_aliases or {
             "Tibet Autonomous Region": "Xizang",
             "Inner Mongolia Autonomous Region": "Nei Mongol",
+            "Cuzco": "Cusco",
+
+
         }
 
         self.region_exception_countries = {
@@ -64,22 +70,53 @@ class GadmLookup:
         if pd.isna(lat) or pd.isna(lon):
             return None
 
-
         with self.conn.cursor() as cur:
             sql = f"""
+            WITH pt AS (
+                SELECT ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS geom
+            )
             SELECT
                 "name_0" AS country_name,
                 "name_1" AS admin1_name,
                 "gid_0"  AS country_gid,
-                "gid_1"  AS admin1_gid
-            FROM {self.adm1_table}
-            WHERE ST_Intersects(
-                geom,
-                ST_SetSRID(ST_MakePoint(%s, %s), 4326)
-            )
+                "gid_1"  AS admin1_gid,
+                TRUE     AS exact_match,
+                0::double precision AS distance_m
+            FROM {self.adm1_table}, pt
+            WHERE ST_Intersects({self.adm1_table}.geom, pt.geom)
             LIMIT 1;
             """
             cur.execute(sql, (float(lon), float(lat)))
+            row = cur.fetchone()
+
+            if row:
+                return {
+                    "gadm_country": row[0],
+                    "gadm_admin1": row[1],
+                    "gadm_gid_0": row[2],
+                    "gadm_gid_1": row[3],
+                    "exact_match": row[4],
+                    "distance_m": row[5],
+                    "near_boundary": False,
+                }
+
+            sql = f"""
+            WITH pt AS (
+                SELECT ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS geom
+            )
+            SELECT
+                "name_0" AS country_name,
+                "name_1" AS admin1_name,
+                "gid_0"  AS country_gid,
+                "gid_1"  AS admin1_gid,
+                FALSE    AS exact_match,
+                ST_Distance({self.adm1_table}.geom::geography, pt.geom::geography) AS distance_m
+            FROM {self.adm1_table}, pt
+            WHERE ST_DWithin({self.adm1_table}.geom::geography, pt.geom::geography, %s)
+            ORDER BY distance_m
+            LIMIT 1;
+            """
+            cur.execute(sql, (float(lon), float(lat), self.boundary_tolerance_m))
             row = cur.fetchone()
 
         if not row:
@@ -90,6 +127,9 @@ class GadmLookup:
             "gadm_admin1": row[1],
             "gadm_gid_0": row[2],
             "gadm_gid_1": row[3],
+            "exact_match": row[4],
+            "distance_m": row[5],
+            "near_boundary": True,
         }
 
     @staticmethod
