@@ -6,6 +6,8 @@
 import argparse
 import csv
 import os.path
+import shutil
+
 from taxon_parse_utils import *
 from gen_import_utils import *
 from string_utils import *
@@ -77,7 +79,7 @@ class CsvCreatePicturae:
 
         self.path_prefix = self.picturae_config.PREFIX
 
-        self.dir_path = self.picturae_config.DATA_FOLDER + "csv_batch"
+        self.dir_path = self.picturae_config.DATA_FOLDER + f"{os.sep}csv_batch"
 
         # setting up alternate csv tools connections
         self.sql_csv_tools = SqlCsvTools(config=self.picturae_config, logging_level=self.logger.getEffectiveLevel())
@@ -95,6 +97,25 @@ class CsvCreatePicturae:
         for param in init_list:
             setattr(self, param, None)
 
+
+    def copy_manifest_from_delivery(self, sheet_list):
+        """copies the raw image manifest into the dest folder"""
+        for filename in sheet_list:
+            batch_date = remove_non_numerics(str(filename))
+            batch_folder = f"CP1_{batch_date}_BATCH_0001"
+            manifest_path = f"{self.picturae_config.PREFIX}{os.sep}{batch_folder}{os.sep}{batch_folder}.csv"
+            dest_path = f"{self.dir_path}{os.sep}{batch_folder}.csv"
+            if not os.path.isfile(dest_path):
+                try:
+                    shutil.copy(manifest_path, dest_path)
+                except Exception as e:
+                    InvalidFilenameError(f"Batch manfiest not found in delivery:{e}")
+            else:
+                continue
+
+
+
+
     def file_present(self):
         """file_present:
            checks if correct filepaths in working directory,
@@ -107,35 +128,40 @@ class CsvCreatePicturae:
 
         to_current_directory()
 
-        dir_sub = os.path.isdir(self.dir_path)
+        if not os.path.isdir(self.dir_path):
+            raise ValueError("picturae csv subdirectory not present")
 
-        if dir_sub is True:
+        self.sheet_list = []
+        self.cover_list = []
+        self.manifest_list = []
 
-            sheet_count = 0
-            cover_count = 0
-            manifest_count = 0
+        for root, dirs, files in os.walk(self.dir_path):
+            for file in files:
+                file_string = file.lower()
+                if "sheet" in file_string:
+                    self.sheet_list.append(file)
+                elif "cover" in file_string:
+                    self.cover_list.append(file)
+                else:
+                    self.logger.info(f"csv {file} file does not fit format, skipping")
 
-            for root, dirs, files in os.walk(self.dir_path):
-                for file in files:
-                    file_string = file.lower()
-                    if "sheet" in file_string:
-                        sheet_count += 1
-                        self.sheet_list.append(file)
-                    elif "cover" in file_string:
-                        cover_count += 1
-                        self.cover_list.append(file)
+        sheet_count = len(self.sheet_list)
+        cover_count = len(self.cover_list)
 
-                    elif "batch" in file_string:
-                        manifest_count += 1
-                        self.manifest_list.append(file)
-                    else:
-                        self.logger.info(f"csv {file} file does not fit format , skipping")
-            if sheet_count != cover_count:
-                raise ValueError(f"Count of Sheet CSVs and Cover CSVs do not match {sheet_count} != {cover_count}")
-            else:
-                self.logger.info("Sheet and Cover CSVs exist!")
-        else:
-            raise ValueError(f"picturae csv subdirectory not present")
+        self.logger.info("Sheet and Cover CSVs exist!")
+
+        # copy manifests
+        self.copy_manifest_from_delivery(self.sheet_list)
+
+        for root, dirs, files in os.walk(self.dir_path):
+            for file in files:
+                if "batch" in file.lower():
+                    self.manifest_list.append(file)
+        manifest_count = len(self.manifest_list)
+        if sheet_count != cover_count != manifest_count:
+            raise ValueError(
+                f"Count of Sheet CSVs, Manifest CSVs, or Cover CSVs do not match {sheet_count} != {cover_count}"
+            )
 
     def csv_read_path(self, csv_level: str):
         """Reads in CSV data for given level and date.
