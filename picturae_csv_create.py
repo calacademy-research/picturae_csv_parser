@@ -1276,67 +1276,6 @@ class CsvCreatePicturae:
 
         return str(gen_spec), str(full_name), str(first_intra), str(tax_name), str(hybrid_base)
 
-    def backfill_tax_family(self):
-        """
-        Fill missing Family values by retrieving parent ID with genus.
-        Uses caching to avoid repeated DB calls.
-        """
-
-        #  only rows missing family -
-        fam = self.record_full.get("Family")
-        gen = self.record_full.get("Genus")
-
-        if fam is None or gen is None:
-            self.logger.warning("backfill_tax_family: missing Family or Genus column; skipping.")
-            return
-
-        fam_missing = fam.isna() | (fam.astype(str).str.strip() == "")
-        genus_present = gen.astype(str).str.strip().ne("")
-        mask = fam_missing & genus_present
-
-        if not mask.any():
-            return
-
-        genus_to_family = {}
-
-        unique_genera = (
-            self.record_full.loc[mask, "Genus"]
-            .astype(str).str.strip()
-            .drop_duplicates()
-            .tolist()
-        )
-
-        for genus_name in unique_genera:
-            sql_genus = f"""
-                SELECT ParentID
-                FROM taxon
-                WHERE FullName = {repr(genus_name)}
-                LIMIT 1;
-            """
-            parent_id = self.specify_db_connection.get_one_record(sql_genus)
-
-            if not parent_id or parent_id in (None, "", 0):
-                genus_to_family[genus_name] = None
-                continue
-
-            sql_parent = f"""
-                SELECT FullName
-                FROM taxon
-                WHERE TaxonID = {int(parent_id)}
-                LIMIT 1;
-            """
-            parent_family = self.specify_db_connection.get_one_record(sql_parent)
-
-            genus_to_family[genus_name] = parent_family if parent_family else None
-
-        fill_series = (
-            self.record_full.loc[mask, "Genus"]
-            .astype(str).str.strip()
-            .map(genus_to_family)
-        )
-
-        can_fill = fill_series.notna() & (fill_series.astype(str).str.strip() != "")
-        self.record_full.loc[mask & can_fill, "Family"] = fill_series.loc[can_fill]
 
     def col_clean(self):
         """parses and cleans dataframe columns until ready for upload.
