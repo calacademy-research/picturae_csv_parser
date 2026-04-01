@@ -6,6 +6,8 @@
 import argparse
 import csv
 import os.path
+import shutil
+
 from taxon_parse_utils import *
 from gen_import_utils import *
 from string_utils import *
@@ -77,7 +79,7 @@ class CsvCreatePicturae:
 
         self.path_prefix = self.picturae_config.PREFIX
 
-        self.dir_path = self.picturae_config.DATA_FOLDER + "csv_batch"
+        self.dir_path = self.picturae_config.DATA_FOLDER + f"{os.sep}csv_batch"
 
         # setting up alternate csv tools connections
         self.sql_csv_tools = SqlCsvTools(config=self.picturae_config, logging_level=self.logger.getEffectiveLevel())
@@ -95,6 +97,25 @@ class CsvCreatePicturae:
         for param in init_list:
             setattr(self, param, None)
 
+
+    def copy_manifest_from_delivery(self, sheet_list):
+        """copies the raw image manifest into the dest folder"""
+        for filename in sheet_list:
+            batch_date = remove_non_numerics(str(filename))
+            batch_folder = f"CP1_{batch_date}_BATCH_0001"
+            manifest_path = f"{self.picturae_config.PREFIX}{os.sep}{batch_folder}{os.sep}{batch_folder}.csv"
+            dest_path = f"{self.dir_path}{os.sep}{batch_folder}.csv"
+            if not os.path.isfile(dest_path):
+                try:
+                    shutil.copy(manifest_path, dest_path)
+                except Exception as e:
+                    InvalidFilenameError(f"Batch manfiest not found in delivery:{e}")
+            else:
+                continue
+
+
+
+
     def file_present(self):
         """file_present:
            checks if correct filepaths in working directory,
@@ -107,35 +128,40 @@ class CsvCreatePicturae:
 
         to_current_directory()
 
-        dir_sub = os.path.isdir(self.dir_path)
+        if not os.path.isdir(self.dir_path):
+            raise ValueError("picturae csv subdirectory not present")
 
-        if dir_sub is True:
+        self.sheet_list = []
+        self.cover_list = []
+        self.manifest_list = []
 
-            sheet_count = 0
-            cover_count = 0
-            manifest_count = 0
+        for root, dirs, files in os.walk(self.dir_path):
+            for file in files:
+                file_string = file.lower()
+                if "sheet" in file_string:
+                    self.sheet_list.append(file)
+                elif "cover" in file_string:
+                    self.cover_list.append(file)
+                else:
+                    self.logger.info(f"csv {file} file does not fit format, skipping")
 
-            for root, dirs, files in os.walk(self.dir_path):
-                for file in files:
-                    file_string = file.lower()
-                    if "sheet" in file_string:
-                        sheet_count += 1
-                        self.sheet_list.append(file)
-                    elif "cover" in file_string:
-                        cover_count += 1
-                        self.cover_list.append(file)
+        sheet_count = len(self.sheet_list)
+        cover_count = len(self.cover_list)
 
-                    elif "batch" in file_string:
-                        manifest_count += 1
-                        self.manifest_list.append(file)
-                    else:
-                        self.logger.info(f"csv {file} file does not fit format , skipping")
-            if sheet_count != cover_count:
-                raise ValueError(f"Count of Sheet CSVs and Cover CSVs do not match {sheet_count} != {cover_count}")
-            else:
-                self.logger.info("Sheet and Cover CSVs exist!")
-        else:
-            raise ValueError(f"picturae csv subdirectory not present")
+        self.logger.info("Sheet and Cover CSVs exist!")
+
+        # copy manifests
+        self.copy_manifest_from_delivery(self.sheet_list)
+
+        for root, dirs, files in os.walk(self.dir_path):
+            for file in files:
+                if "batch" in file.lower():
+                    self.manifest_list.append(file)
+        manifest_count = len(self.manifest_list)
+        if sheet_count != cover_count != manifest_count:
+            raise ValueError(
+                f"Count of Sheet CSVs, Manifest CSVs, or Cover CSVs do not match {sheet_count} != {cover_count}"
+            )
 
     def csv_read_path(self, csv_level: str):
         """Reads in CSV data for given level and date.
@@ -614,6 +640,117 @@ class CsvCreatePicturae:
 
         return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv, \
                 invalid_verbatim_csv)
+
+    def backfill_tax_family(self):
+        """
+        Fill missing Family values in two passes:
+        1. from other rows in the current dataframe with the same Genus
+        2. from the taxon DB using the genus -> parent family lookup
+
+        This helps reduce missing_family flags when cover CSV rows are missing
+        Family but another row in the same import already has it filled.
+        """
+
+        fam = self.record_full.get("Family")
+        gen = self.record_full.get("Genus")
+
+        if fam is None or gen is None:
+            self.logger.warning("backfill_tax_family: missing Family or Genus column; skipping.")
+            return
+
+        family_clean = fam.astype(str).str.strip()
+        genus_clean = gen.astype(str).str.strip()
+
+        fam_missing = fam.isna() | family_clean.eq("")
+        genus_present = genus_clean.ne("")
+
+        if not (fam_missing & genus_present).any():
+            return
+
+        # -----------------------------
+        # Pass 1: fill from local rows
+        # -----------------------------
+        local_genus_family = (
+            self.record_full.loc[genus_present & ~fam_missing, ["Genus", "Family"]]
+            .assign(
+                Genus=lambda d: d["Genus"].astype(str).str.strip(),
+                Family=lambda d: d["Family"].astype(str).str.strip()
+            )
+        )
+
+        # Keep only non-empty genus/family pairs
+        local_genus_family = local_genus_family[
+            local_genus_family["Genus"].ne("") & local_genus_family["Family"].ne("")
+            ]
+
+        # Only use genera that map to exactly one family in the current data
+        genus_nunique = local_genus_family.groupby("Genus")["Family"].nunique()
+        unambiguous_genera = genus_nunique[genus_nunique == 1].index
+
+        genus_to_family_local = (
+            local_genus_family[local_genus_family["Genus"].isin(unambiguous_genera)]
+            .drop_duplicates(subset=["Genus"])
+            .set_index("Genus")["Family"]
+            .to_dict()
+        )
+
+        local_fill_mask = fam_missing & genus_present
+        local_fill_series = genus_clean.map(genus_to_family_local)
+        can_fill_local = local_fill_series.notna() & local_fill_series.astype(str).str.strip().ne("")
+
+        self.record_full.loc[local_fill_mask & can_fill_local, "Family"] = local_fill_series.loc[can_fill_local]
+
+        # Recompute masks after local fill
+        fam = self.record_full.get("Family")
+        family_clean = fam.astype(str).str.strip()
+        fam_missing = fam.isna() | family_clean.eq("")
+        mask = fam_missing & genus_present
+
+        if not mask.any():
+            return
+
+        # -----------------------------
+        # Pass 2: fill from DB
+        # -----------------------------
+        genus_to_family_db = {}
+
+        unique_genera = (
+            self.record_full.loc[mask, "Genus"]
+            .astype(str).str.strip()
+            .drop_duplicates()
+            .tolist()
+        )
+
+        for genus_name in unique_genera:
+            sql_genus = f"""
+                SELECT ParentID
+                FROM taxon
+                WHERE FullName = {repr(genus_name)}
+                LIMIT 1;
+            """
+            parent_id = self.specify_db_connection.get_one_record(sql_genus)
+
+            if not parent_id or parent_id in (None, "", 0):
+                genus_to_family_db[genus_name] = None
+                continue
+
+            sql_parent = f"""
+                SELECT FullName
+                FROM taxon
+                WHERE TaxonID = {int(parent_id)}
+                LIMIT 1;
+            """
+            parent_family = self.specify_db_connection.get_one_record(sql_parent)
+            genus_to_family_db[genus_name] = parent_family if parent_family else None
+
+        db_fill_series = (
+            self.record_full.loc[mask, "Genus"]
+            .astype(str).str.strip()
+            .map(genus_to_family_db)
+        )
+
+        can_fill_db = db_fill_series.notna() & db_fill_series.astype(str).str.strip().ne("")
+        self.record_full.loc[mask & can_fill_db, "Family"] = db_fill_series.loc[can_fill_db]
 
     def flag_missing_data(self):
 
@@ -1139,67 +1276,6 @@ class CsvCreatePicturae:
 
         return str(gen_spec), str(full_name), str(first_intra), str(tax_name), str(hybrid_base)
 
-    def backfill_tax_family(self):
-        """
-        Fill missing Family values by retrieving parent ID with genus.
-        Uses caching to avoid repeated DB calls.
-        """
-
-        #  only rows missing family -
-        fam = self.record_full.get("Family")
-        gen = self.record_full.get("Genus")
-
-        if fam is None or gen is None:
-            self.logger.warning("backfill_tax_family: missing Family or Genus column; skipping.")
-            return
-
-        fam_missing = fam.isna() | (fam.astype(str).str.strip() == "")
-        genus_present = gen.astype(str).str.strip().ne("")
-        mask = fam_missing & genus_present
-
-        if not mask.any():
-            return
-
-        genus_to_family = {}
-
-        unique_genera = (
-            self.record_full.loc[mask, "Genus"]
-            .astype(str).str.strip()
-            .drop_duplicates()
-            .tolist()
-        )
-
-        for genus_name in unique_genera:
-            sql_genus = f"""
-                SELECT ParentID
-                FROM taxon
-                WHERE FullName = {repr(genus_name)}
-                LIMIT 1;
-            """
-            parent_id = self.specify_db_connection.get_one_record(sql_genus)
-
-            if not parent_id or parent_id in (None, "", 0):
-                genus_to_family[genus_name] = None
-                continue
-
-            sql_parent = f"""
-                SELECT FullName
-                FROM taxon
-                WHERE TaxonID = {int(parent_id)}
-                LIMIT 1;
-            """
-            parent_family = self.specify_db_connection.get_one_record(sql_parent)
-
-            genus_to_family[genus_name] = parent_family if parent_family else None
-
-        fill_series = (
-            self.record_full.loc[mask, "Genus"]
-            .astype(str).str.strip()
-            .map(genus_to_family)
-        )
-
-        can_fill = fill_series.notna() & (fill_series.astype(str).str.strip() != "")
-        self.record_full.loc[mask & can_fill, "Family"] = fill_series.loc[can_fill]
 
     def col_clean(self):
         """parses and cleans dataframe columns until ready for upload.
