@@ -1188,6 +1188,27 @@ class CsvCreatePicturae:
             existing_notes.loc[update_mask] + " " + note
         )
 
+
+    def fill_missing_country(self):
+        """
+        Replace blank / placeholder Country values with 'Earth'.
+        Treats empty strings, NA-like values, and literal 'X' as missing.
+        """
+
+        if "Country" not in self.record_full.columns:
+            self.logger.warning("fill_missing_country_with_earth: Country column missing; skipping.")
+            return
+
+        country_series = self.record_full["Country"].astype(str).str.strip()
+
+        missing_country_mask = (
+                self.record_full["Country"].isna()
+                | country_series.isin(["", "X", "nan", "<NA>"])
+        )
+
+        self.record_full.loc[missing_country_mask, "Country"] = "Earth"
+
+
     def taxon_concat(self, row):
         """taxon_concat:
                 parses taxon columns to check taxon database, adds the Genus species, ranks, and Epithets,
@@ -1294,8 +1315,12 @@ class CsvCreatePicturae:
             self.record_full[colname] = self.record_full[colname].apply(
                 lambda x: replace_apostrophes(x).strip() if isinstance(x, str) else x
             )
+
+
         # filling in missing family with existing genera in DB
         self.backfill_tax_family()
+        # filling in missing higher geography with placeholder
+        self.fill_missing_country()
         # flagging missing data
         self.flag_missing_data()
 
