@@ -619,8 +619,8 @@ class CsvCreatePicturae:
         missing_label_csv = self.record_full.loc[missing_label]
 
         # flags incorrect start date and end date
-        invalid_start_date = ~self.record_full['start_date'].apply(validate_date)
-        invalid_end_date = ~self.record_full['end_date'].apply(validate_date)
+        invalid_start_date = ~self.record_full['start_date'].apply(lambda x: validate_date(x, correct_invalid_day=True))
+        invalid_end_date = ~self.record_full['end_date'].apply(lambda x: validate_date(x, correct_invalid_day=True))
 
         invalid_date_mask = invalid_start_date | invalid_end_date
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
@@ -638,7 +638,7 @@ class CsvCreatePicturae:
 
         invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
 
-        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv, \
+        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv,
                 invalid_verbatim_csv)
 
     def backfill_tax_family(self):
@@ -1604,6 +1604,7 @@ class CsvCreatePicturae:
         taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
                                             (pd.notna(self.record_full['overall_score'])) &
                                             (self.record_full['overall_score'] != 0)]
+        taxon_correct_table = []
 
         try:
             taxon_correct_table = taxon_to_correct[['CSV_batch', 'fullname',
@@ -1613,7 +1614,7 @@ class CsvCreatePicturae:
 
         except:
             raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
-                                      f'the following batches: {taxon_correct_table}')
+                                      f'the following batches: {taxon_correct_table.to_string()}')
 
     def read_and_merge_image_manifest(self):
         """to keep taxonomic family consistent with herbarium cabinet order,

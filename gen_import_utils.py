@@ -11,6 +11,7 @@ import settings
 import os
 import re
 from dateutil.parser import parse
+import calendar
 
 # import list tools
 
@@ -84,28 +85,55 @@ def separate_titles(row, config):
     return row
 
 
-def validate_date(date_string):
+def validate_date(date_string, correct_invalid_day=False):
     """
-    validate_date: Validates whether a date string is on the calendar, accounting for leap years.
-    Is agnostic to formats between  YYYY, YYYY-MM, YYYY-MM-DD)
-    Args:
-        date_string: Date in string form.
+    Validates date strings in YYYY, YYYY-MM, or YYYY-MM-DD format.
+
+    If correct_invalid_day=True, fixes only invalid day-of-month cases:
+        2024-04-31 -> 2024-04-30
+        2023-02-29 -> 2023-02-28
 
     Returns:
-        True if the date is valid according to its detected format; False otherwise.
+        True/False if correct_invalid_day=False
+        corrected string/False if correct_invalid_day=True
     """
-    if date_string and pd.notna(date_string):
-        if len(date_string.split('-')[0]) != 4:
-            logging.error("Year must be 4 digits.")
-            return False
-        try:
-            parse(date_string, fuzzy=False)
-            return True
-        except Exception as e:
-            logging.error(f"{e}")
-            return False
-    else:
-        return True
+    if not date_string or pd.isna(date_string):
+        return True if not correct_invalid_day else date_string
+
+    date_string = str(date_string).strip()
+    parts = date_string.split("-")
+
+    if len(parts[0]) != 4:
+        logging.error("Year must be 4 digits.")
+        return False
+
+    try:
+        parse(date_string, fuzzy=False)
+        return True if not correct_invalid_day else date_string
+
+    except Exception as e:
+        # Only try correction for YYYY-MM-DD
+        if correct_invalid_day and len(parts) == 3:
+            try:
+                year = int(parts[0])
+                month = int(parts[1])
+                day = int(parts[2])
+
+                last_day = calendar.monthrange(year, month)[1]
+
+                # Only correct days that are too high.
+                if day > last_day:
+                    fixed_date = f"{year:04d}-{month:02d}-{last_day:02d}"
+                    logging.warning(
+                        f"Corrected invalid date {date_string} to {fixed_date}"
+                    )
+                    return fixed_date
+
+            except Exception:
+                pass
+
+        logging.error(f"{e}")
+        return False
 
 
 
