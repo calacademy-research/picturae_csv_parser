@@ -4,6 +4,7 @@
 import pandas as pd
 import re
 pd.set_option('expand_frame_repr', False)
+import numpy as np
 
 # taxon parsing tools, tools that modify or parse taxon columns and info,
 def separate_qualifiers(tax_frame: pd.DataFrame, tax_col: str):
