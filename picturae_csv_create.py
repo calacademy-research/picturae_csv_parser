@@ -27,6 +27,7 @@ from datetime import datetime
 import geopandas as gpd
 import geodatasets
 from postGIS.post_gis_search import GadmLookup
+from geo_utils import apply_crs_exceptions
 
 
 starting_time_stamp = datetime.now()
@@ -619,8 +620,11 @@ class CsvCreatePicturae:
         missing_label_csv = self.record_full.loc[missing_label]
 
         # flags incorrect start date and end date
-        invalid_start_date = ~self.record_full['start_date'].apply(validate_date)
-        invalid_end_date = ~self.record_full['end_date'].apply(validate_date)
+        self.record_full['start_date'].apply(lambda x: validate_date(x, correct_invalid_day=True))
+        self.record_full['end_date'].apply(lambda x: validate_date(x, correct_invalid_day=True))
+
+        invalid_start_date = ~self.record_full["start_date"].apply(validate_date)
+        invalid_end_date = ~self.record_full["end_date"].apply(validate_date)
 
         invalid_date_mask = invalid_start_date | invalid_end_date
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
@@ -638,7 +642,7 @@ class CsvCreatePicturae:
 
         invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
 
-        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv, \
+        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv,
                 invalid_verbatim_csv)
 
     def backfill_tax_family(self):
@@ -1327,6 +1331,10 @@ class CsvCreatePicturae:
         # self clean lat long:
         self.process_lat_long_frame()
 
+        # detect alt utm crs
+
+        self.record_full = apply_crs_exceptions(self.record_full)
+
         # reverse geocode coords against GADM and flag admin mismatches
         self.add_gadm_coord_checks()
 
@@ -1352,6 +1360,8 @@ class CsvCreatePicturae:
 
         self.record_full[tax_cols] = self.record_full[tax_cols].map(
             lambda x: x.strip() if isinstance(x, str) else x)
+
+        self.move_indet_species_to_sheet_notes()
 
         # filling in missing subtaxa ranks for first infraspecific rank
         self.record_full['missing_rank'] = (pd.isna(self.record_full[f'Rank 1']) & pd.notna(
@@ -1431,6 +1441,29 @@ class CsvCreatePicturae:
             lambda row: os.path.exists(f"{row['image_path']}")
                         or str_to_bool(row['duplicate']) is True,
             axis=1)
+
+
+    def move_indet_species_to_sheet_notes(self):
+        """
+        If Species is indet. or undet., copy that value into sheet_notes
+        and clear species, so it does not get used in taxon parsing.
+        """
+
+        species_clean = self.record_full["Species"].astype(str).str.strip()
+        mask = species_clean.str.lower().isin(["indet.", "undet."])
+
+        if not mask.any():
+            return
+
+        existing_notes = self.record_full.loc[mask, "sheet_notes"].fillna("").astype(str).str.strip()
+
+        self.record_full.loc[mask, "sheet_notes"] = np.where(
+            existing_notes == "",
+            species_clean.loc[mask],
+            existing_notes + " " + species_clean.loc[mask]
+        )
+
+        self.record_full.loc[mask, "Species"] = ""
 
     def taxon_process_row(self, row):
         """applies taxon_get to a row of the picturae python dataframe"""
@@ -1604,6 +1637,7 @@ class CsvCreatePicturae:
         taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
                                             (pd.notna(self.record_full['overall_score'])) &
                                             (self.record_full['overall_score'] != 0)]
+        taxon_correct_table = []
 
         try:
             taxon_correct_table = taxon_to_correct[['CSV_batch', 'fullname',
@@ -1613,7 +1647,7 @@ class CsvCreatePicturae:
 
         except:
             raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
-                                      f'the following batches: {taxon_correct_table}')
+                                      f'the following batches: {taxon_correct_table.to_string()}')
 
     def read_and_merge_image_manifest(self):
         """to keep taxonomic family consistent with herbarium cabinet order,

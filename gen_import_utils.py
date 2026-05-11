@@ -11,6 +11,7 @@ import settings
 import os
 import re
 from dateutil.parser import parse
+import calendar
 
 # import list tools
 
@@ -84,28 +85,61 @@ def separate_titles(row, config):
     return row
 
 
-def validate_date(date_string):
+def validate_date(date_string, correct_invalid_day=False, max_attempts=3):
     """
-    validate_date: Validates whether a date string is on the calendar, accounting for leap years.
-    Is agnostic to formats between  YYYY, YYYY-MM, YYYY-MM-DD)
-    Args:
-        date_string: Date in string form.
+    Validates date strings in YYYY, YYYY-MM, or YYYY-MM-DD format.
+
+    If correct_invalid_day=True, fixes only invalid day-of-month cases:
+        2024-04-31 -> 2024-04-30
+        2023-02-29 -> 2023-02-28
 
     Returns:
-        True if the date is valid according to its detected format; False otherwise.
+        True/False if correct_invalid_day=False
+        corrected string/False if correct_invalid_day=True
     """
-    if date_string and pd.notna(date_string):
-        if len(date_string.split('-')[0]) != 4:
+    if not date_string or pd.isna(date_string):
+        return True if not correct_invalid_day else date_string
+
+    current_date = str(date_string).strip()
+
+    for _ in range(max_attempts):
+        parts = current_date.split("-")
+
+        if len(parts[0]) != 4:
             logging.error("Year must be 4 digits.")
             return False
+
         try:
-            parse(date_string, fuzzy=False)
-            return True
+            parse(current_date, fuzzy=False)
+            return True if not correct_invalid_day else current_date
+
         except Exception as e:
+            if correct_invalid_day and len(parts) == 3:
+                try:
+                    year = int(parts[0])
+                    month = int(parts[1])
+                    day = int(parts[2])
+
+                    last_day = calendar.monthrange(year, month)[1]
+
+                    if day > last_day:
+                        fixed_date = f"{year:04d}-{month:02d}-{last_day:02d}"
+
+                        logging.warning(
+                            f"Corrected invalid date {current_date} to {fixed_date}"
+                        )
+
+                        current_date = fixed_date
+                        continue  # check again with corrected date
+
+                except Exception:
+                    pass
+
             logging.error(f"{e}")
             return False
-    else:
-        return True
+
+    logging.error(f"Could not validate date after correction attempts: {date_string}")
+    return False
 
 
 
@@ -255,6 +289,7 @@ def cont_prompter():
             sys.exit("Script terminated by user.")
         else:
             print("Invalid input. Please enter 'y' or 'n'.")
+
 
 def generate_token(timestamp, filename):
     """Generate the auth token for the given filename and timestamp.
