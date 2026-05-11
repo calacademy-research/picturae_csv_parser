@@ -85,7 +85,7 @@ def separate_titles(row, config):
     return row
 
 
-def validate_date(date_string, correct_invalid_day=False):
+def validate_date(date_string, correct_invalid_day=False, max_attempts=3):
     """
     Validates date strings in YYYY, YYYY-MM, or YYYY-MM-DD format.
 
@@ -100,40 +100,46 @@ def validate_date(date_string, correct_invalid_day=False):
     if not date_string or pd.isna(date_string):
         return True if not correct_invalid_day else date_string
 
-    date_string = str(date_string).strip()
-    parts = date_string.split("-")
+    current_date = str(date_string).strip()
 
-    if len(parts[0]) != 4:
-        logging.error("Year must be 4 digits.")
-        return False
+    for _ in range(max_attempts):
+        parts = current_date.split("-")
 
-    try:
-        parse(date_string, fuzzy=False)
-        return True if not correct_invalid_day else date_string
+        if len(parts[0]) != 4:
+            logging.error("Year must be 4 digits.")
+            return False
 
-    except Exception as e:
-        # Only try correction for YYYY-MM-DD
-        if correct_invalid_day and len(parts) == 3:
-            try:
-                year = int(parts[0])
-                month = int(parts[1])
-                day = int(parts[2])
+        try:
+            parse(current_date, fuzzy=False)
+            return True if not correct_invalid_day else current_date
 
-                last_day = calendar.monthrange(year, month)[1]
+        except Exception as e:
+            if correct_invalid_day and len(parts) == 3:
+                try:
+                    year = int(parts[0])
+                    month = int(parts[1])
+                    day = int(parts[2])
 
-                # Only correct days that are too high.
-                if day > last_day:
-                    fixed_date = f"{year:04d}-{month:02d}-{last_day:02d}"
-                    logging.warning(
-                        f"Corrected invalid date {date_string} to {fixed_date}"
-                    )
-                    return fixed_date
+                    last_day = calendar.monthrange(year, month)[1]
 
-            except Exception:
-                pass
+                    if day > last_day:
+                        fixed_date = f"{year:04d}-{month:02d}-{last_day:02d}"
 
-        logging.error(f"{e}")
-        return False
+                        logging.warning(
+                            f"Corrected invalid date {current_date} to {fixed_date}"
+                        )
+
+                        current_date = fixed_date
+                        continue  # check again with corrected date
+
+                except Exception:
+                    pass
+
+            logging.error(f"{e}")
+            return False
+
+    logging.error(f"Could not validate date after correction attempts: {date_string}")
+    return False
 
 
 
@@ -283,6 +289,7 @@ def cont_prompter():
             sys.exit("Script terminated by user.")
         else:
             print("Invalid input. Please enter 'y' or 'n'.")
+
 
 def generate_token(timestamp, filename):
     """Generate the auth token for the given filename and timestamp.
