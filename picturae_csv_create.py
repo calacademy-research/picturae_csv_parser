@@ -620,13 +620,12 @@ class CsvCreatePicturae:
         missing_label_csv = self.record_full.loc[missing_label]
 
         # flags incorrect start date and end date
-        self.record_full['start_date'].apply(lambda x: validate_date(x, correct_invalid_day=True))
-        self.record_full['end_date'].apply(lambda x: validate_date(x, correct_invalid_day=True))
+        for col in ["start_date", "end_date"]:
+            self.record_full[col] = self.record_full[col].apply(correct_date)
 
-        invalid_start_date = ~self.record_full["start_date"].apply(validate_date)
-        invalid_end_date = ~self.record_full["end_date"].apply(validate_date)
+        invalid_date_mask = (~self.record_full["start_date"].apply(is_valid_date) |
+                             ~self.record_full["end_date"].apply(is_valid_date))
 
-        invalid_date_mask = invalid_start_date | invalid_end_date
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
         # flags verbatim date too long greater than 50 char and stores them in new label_data column

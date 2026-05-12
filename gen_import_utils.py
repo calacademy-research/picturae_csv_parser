@@ -85,7 +85,7 @@ def separate_titles(row, config):
     return row
 
 
-def validate_date(date_string, correct_invalid_day=False, max_attempts=3):
+def correct_date(date_string, max_attempts=3):
     """
     Validates date strings in YYYY, YYYY-MM, or YYYY-MM-DD format.
 
@@ -94,55 +94,71 @@ def validate_date(date_string, correct_invalid_day=False, max_attempts=3):
         2023-02-29 -> 2023-02-28
 
     Returns:
-        True/False if correct_invalid_day=False
-        corrected string/False if correct_invalid_day=True
+        corrected string/original
     """
     if not date_string or pd.isna(date_string):
-        return True if not correct_invalid_day else date_string
+        return date_string
 
-    current_date = str(date_string).strip()
+    original_date = str(date_string).strip()
+    current_date = original_date
 
     for _ in range(max_attempts):
+
+        if is_valid_date(current_date):
+            return current_date
+
         parts = current_date.split("-")
 
-        if len(parts[0]) != 4:
-            logging.error("Year must be 4 digits.")
-            return False
+        if len(parts) != 3 or len(parts[0]) != 4:
+            return original_date
 
         try:
-            parse(current_date, fuzzy=False)
-            return True if not correct_invalid_day else current_date
+            year = int(parts[0])
+            month = int(parts[1])
+            day = int(parts[2])
 
-        except Exception as e:
-            if correct_invalid_day and len(parts) == 3:
-                try:
-                    year = int(parts[0])
-                    month = int(parts[1])
-                    day = int(parts[2])
+            if month < 1 or month > 12:
+                return original_date
 
-                    last_day = calendar.monthrange(year, month)[1]
+            last_day = calendar.monthrange(year, month)[1]
 
-                    if day > last_day:
-                        fixed_date = f"{year:04d}-{month:02d}-{last_day:02d}"
+            if day > last_day:
+                fixed_date = f"{year:04d}-{month:02d}-{last_day:02d}"
 
-                        logging.warning(
-                            f"Corrected invalid date {current_date} to {fixed_date}"
-                        )
+                logging.warning(
+                    f"Corrected invalid date {current_date} to {fixed_date}"
+                )
 
-                        current_date = fixed_date
-                        continue  # check again with corrected date
+                current_date = fixed_date
+                continue
 
-                except Exception:
-                    pass
+            return original_date
 
-            logging.error(f"{e}")
-            return False
+        except Exception:
+            return original_date
 
-    logging.error(f"Could not validate date after correction attempts: {date_string}")
-    return False
+    return original_date
 
 
+def is_valid_date(date_string):
+    """returns boolean mask of True/False if a date is valid/invalid."""
+    if not date_string or pd.isna(date_string):
+        return True
 
+    date_string = str(date_string).strip()
+
+    parts = date_string.split("-")
+
+    if len(parts[0]) != 4:
+        logging.error("Year must be 4 digits.")
+        return False
+
+    try:
+        parse(date_string, fuzzy=False)
+        return True
+    except Exception as e:
+        logging.error(f"{e}: {date_string}")
+        return False
 
 def format_date_columns(year, month, day):
     """Build a date-like string from year/month/day.
