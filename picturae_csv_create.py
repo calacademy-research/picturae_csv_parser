@@ -782,31 +782,56 @@ class CsvCreatePicturae:
         message_parts = []
 
         for key, csv_data in data_flag_dict.items():
+
             if key == "missing_label" and self.covered_ignore:
                 continue
+
             if len(csv_data) == 0:
                 continue
 
             csv_data = csv_data.sort_values(by=["CSV_batch", "CatalogNumber"])
+
             id_col = "folder_barcode" if key in ["missing_rank", "missing_family"] else "CatalogNumber"
 
-            batch_to_items = (
-                csv_data.groupby("CSV_batch")[id_col]
-                .apply(lambda s: sorted(set(s.dropna().astype(str))))
-                .to_dict()
-            )
+            # Special formatting to print out offending verbatim dates.
+            if key == "invalid_verbatim":
+
+                batch_to_items = (
+                    csv_data.groupby("CSV_batch")
+                    .apply(
+                        lambda df: [
+                            f"{str(barcode).strip()}: {str(verbatim).strip()}"
+                            for barcode, verbatim in zip(
+                                df["CatalogNumber"],
+                                df["verbatim_date"]
+                            )
+                        ]
+                    )
+                    .to_dict()
+                )
+
+            else:
+
+                batch_to_items = (
+                    csv_data.groupby("CSV_batch")[id_col]
+                    .apply(lambda s: sorted(set(s.dropna().astype(str))))
+                    .to_dict()
+                )
 
             flagged_data[key] = batch_to_items
 
             formatted_batches = "\n".join(
-                f"  {batch}: {items}"
+                f"  {batch}:\n    " + "\n    ".join(items)
                 for batch, items in batch_to_items.items()
             )
 
-            message_parts.append(f"{message_dict[key]}\n{formatted_batches}")
+            message_parts.append(
+                f"{message_dict[key]}\n{formatted_batches}"
+            )
 
         if message_parts:
             raise ValueError("\n\n".join(message_parts))
+
 
 
     def safe_parse_coord(
@@ -1121,7 +1146,7 @@ class CsvCreatePicturae:
                 user="postgres",
                 password="postgres",
                 port=5432,
-                adm1_table="public.gadm",  # verify with \dt
+                adm1_table="public.gadm",
             )
 
             for idx, row in self.record_full.loc[valid_mask].iterrows():
