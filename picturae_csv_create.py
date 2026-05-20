@@ -793,7 +793,7 @@ class CsvCreatePicturae:
 
             id_col = "folder_barcode" if key in ["missing_rank", "missing_family"] else "CatalogNumber"
 
-            # Special formatting to print out offending verbatim dates.
+            # Special formatting only for invalid verbatim dates
             if key == "invalid_verbatim":
 
                 batch_to_items = (
@@ -810,6 +810,11 @@ class CsvCreatePicturae:
                     .to_dict()
                 )
 
+                formatted_batches = "\n".join(
+                    f"  {batch}:\n    " + "\n    ".join(items)
+                    for batch, items in batch_to_items.items()
+                )
+
             else:
 
                 batch_to_items = (
@@ -818,12 +823,12 @@ class CsvCreatePicturae:
                     .to_dict()
                 )
 
-            flagged_data[key] = batch_to_items
+                formatted_batches = "\n".join(
+                    f"  {batch}: {items}"
+                    for batch, items in batch_to_items.items()
+                )
 
-            formatted_batches = "\n".join(
-                f"  {batch}:\n    " + "\n    ".join(items)
-                for batch, items in batch_to_items.items()
-            )
+            flagged_data[key] = batch_to_items
 
             message_parts.append(
                 f"{message_dict[key]}\n{formatted_batches}"
