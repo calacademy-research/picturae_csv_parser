@@ -70,7 +70,7 @@ class CsvCreatePicturae:
 
     def init_all_vars(self):
         """init_all_vars:to use for testing and decluttering init function,
-                            initializes all class level variables  """
+                           initializes all class level variables  """
 
         self.cover_list = []
 
@@ -194,7 +194,7 @@ class CsvCreatePicturae:
                     df["IMAGE-FILENAME"] = (
                         df["IMAGE-FILENAME"]
                         .astype(str)
-                        .str.replace(r"\D+", "", regex=True)
+                        .str.replace(r"\.jpg$", "", regex=True)  # only at end
                     )
                     df.rename(columns={"IMAGE-FILENAME": "SPECIMEN-BARCODE"}, inplace=True)
                 if csv_level == "COVER":
@@ -243,8 +243,8 @@ class CsvCreatePicturae:
 
     def fill_duplicate_barcodes(self):
 
-        # 7 or more digits
-        barcode_pat = r"(?<!\d)\d{7,}(?!\d)"
+        # 7-9 digit
+        barcode_pat = r"(?<!\d)\d{7,9}(?!\d)"
 
         # Only treat as "duplicate" if NOTES contains a barcode-like number
         is_duplicate = self.record_full["sheet_notes"].astype(str).str.contains(barcode_pat, regex=True, na=False)
@@ -326,24 +326,44 @@ class CsvCreatePicturae:
                 fold_csv: the folder level csv
                 spec_csv: the specimen level csv
         """
-        matched_csv = pd.merge(spec_csv, manifest_csv, on="SPECIMEN-BARCODE")
+
+        spec_csv = spec_csv.copy()
+        manifest_csv = manifest_csv.copy()
+
+        # Temporary merge keys that remove _1, _2, etc. for matching only
+        spec_csv["_SPECIMEN_BARCODE_MERGE"] = spec_csv["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
+        manifest_csv["_SPECIMEN_BARCODE_MERGE"] = manifest_csv["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
+
+        matched_csv = pd.merge(
+            spec_csv,
+            manifest_csv.drop(columns=["SPECIMEN-BARCODE"], errors="ignore"),
+            on="_SPECIMEN_BARCODE_MERGE",
+            how="inner",
+        )
+
+        matched_csv.drop(columns=["_SPECIMEN_BARCODE_MERGE"], inplace=True)
+
         self.record_full = pd.merge(fold_csv, matched_csv, on="FOLDER-BARCODE")
+
         self.record_full.fillna(np.nan, inplace=True)
-        self.record_full.rename(columns={"NOTES_x": "cover_notes",
-                                         "NOTES_y": "sheet_notes"}, inplace=True)
+        self.record_full.rename(columns={
+            "NOTES_x": "cover_notes",
+            "NOTES_y": "sheet_notes"
+        }, inplace=True)
 
-        # Barcodes present in specimen CSV but not matched in merged CSV
-        spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
+        # Compare using suffix-less barcodes
+        spec_keys = set(spec_csv["_SPECIMEN_BARCODE_MERGE"])
+        matched_keys = set(
+            self.record_full["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
+        )
 
-        fold_difference = set(self.record_full['FOLDER-BARCODE']) - set(manifest_csv['FOLDER-BARCODE'])
+        spec_difference_keys = spec_keys - matched_keys
 
-        if spec_difference:
+        if spec_difference_keys:
 
-            # Sort numerically where possible
-            spec_difference = sorted(spec_difference, key=lambda x: int(x) if x.isdigit() else float('inf'))
-
-            # Filter rows that correspond to unmatched barcodes
-            filtered = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
+            filtered = spec_csv[
+                spec_csv["_SPECIMEN_BARCODE_MERGE"].isin(spec_difference_keys)
+            ]
 
             # --- Build mapping: CSV-BATCH → List of unmatched barcodes ---
             batch_map = (
@@ -354,12 +374,27 @@ class CsvCreatePicturae:
 
             # Optionally sort the barcode lists
             for k in batch_map:
-                batch_map[k] = sorted(batch_map[k], key=lambda x: int(x) if x.isdigit() else float("inf"))
+                batch_map[k] = sorted(
+                    batch_map[k],
+                    key=lambda x: int(remove_barcode_suffix(str(x)))
+                    if remove_barcode_suffix(str(x)).isdigit()
+                    else float("inf")
+                )
 
             raise ValueError({"unmatched_barcodes": batch_map})
 
+        fold_difference = set(self.record_full["FOLDER-BARCODE"]) - set(manifest_csv["FOLDER-BARCODE"])
+
         if fold_difference:
-            self.logger.warning(f"Following folder barcodes not in specimen csv {fold_difference}")
+            self.logger.warning(
+                f"Following folder barcodes not in specimen csv {fold_difference}"
+            )
+
+        # Cleanup temporary columns
+        spec_csv.drop(columns=["_SPECIMEN_BARCODE_MERGE"], inplace=True, errors="ignore")
+        manifest_csv.drop(columns=["_SPECIMEN_BARCODE_MERGE"], inplace=True, errors="ignore")
+
+
 
     def remove_duplicate_barcodes(self):
         """Removing and saving rows with improperly marked duplicate records for further visual QC"""
@@ -371,7 +406,7 @@ class CsvCreatePicturae:
 
         # where specimen barcode is duplicated, but collector-number is NOT duplicated.
         unmarked_dupes = duplicates[
-            duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'Collector Number'], keep=False) == False]
+            duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'COLLECTOR-NUMBER'], keep=False) == False]
 
         unmarked_all = self.record_full[
             self.record_full['SPECIMEN-BARCODE'].isin(unmarked_dupes['SPECIMEN-BARCODE'])]
