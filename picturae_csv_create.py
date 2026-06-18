@@ -518,11 +518,19 @@ class CsvCreatePicturae:
         #
         self.record_full.rename(columns=col_dict, inplace=True)
 
+        parent_barcode = self.record_full["parent_CatalogNumber"].astype("string").str.strip()
+        catalog_barcode = self.record_full["CatalogNumber"].astype("string").str.strip()
+
+        image_barcode = parent_barcode.where(
+            parent_barcode.notna() & (parent_barcode != ""),
+            catalog_barcode
+        )
+
         # creating image path
         self.record_full["image_path"] = (
             self.record_full["CSV_batch"].astype(str).str.strip()
             + os.sep + "undatabased" + os.sep
-            + self.record_full["CatalogNumber"].astype(str).str.strip()
+            + image_barcode
             + ".tif"
         )
 
