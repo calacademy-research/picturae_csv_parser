@@ -1509,10 +1509,30 @@ class CsvCreatePicturae:
     def check_if_images_present(self):
         """checks that each image exists, creating boolean column for later use"""
 
-        self.record_full['image_valid'] = self.record_full.apply(
-            lambda row: os.path.exists(f"{row['image_path']}")
-                        or str_to_bool(row['duplicate']) is True,
-            axis=1)
+        paths = self.record_full["image_path"].fillna("").astype(str)
+
+        dir_to_files = {}
+
+        for directory in paths.map(os.path.dirname).drop_duplicates():
+            if not directory:
+                continue
+
+            try:
+                dir_to_files[directory] = set(os.listdir(directory))
+            except FileNotFoundError:
+                dir_to_files[directory] = set()
+
+        basenames = paths.map(os.path.basename)
+        directories = paths.map(os.path.dirname)
+
+        exists_mask = [
+            filename in dir_to_files.get(directory, set())
+            for directory, filename in zip(directories, basenames)
+        ]
+
+        duplicate_mask = self.record_full["duplicate"].apply(str_to_bool)
+
+        self.record_full["image_valid"] = pd.Series(exists_mask, index=self.record_full.index) | duplicate_mask
 
 
     def move_indet_species_to_sheet_notes(self):
