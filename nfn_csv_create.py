@@ -803,7 +803,7 @@ class NfnCsvCreate():
 
         self.summary_path = f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_summary.html"
 
-        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1', ""])
+        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1'], inplace=True, errors="ignore")
 
         # normalizing column names to match db fields for update
 
@@ -820,7 +820,7 @@ class NfnCsvCreate():
                                         "Township_1": "Township", "Range_1": "RangeDesc",
                                         "Section_1": "Section",
                                         "Quadrangle_1": "BaseMeridian"
-                                        })
+                                        }, inplace=True)
 
         self.master_csv.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_unreconciled.csv",
