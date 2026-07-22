@@ -19,7 +19,7 @@ from coordinate_parser.parser import parse_coordinate
 
 # https://pypi.org/project/coordinate-parser/
 
-class NfnCsvCreate():
+class NfnCsvCreate:
     def __init__(self, coll, input_file,  model,  logging_level, hemisphere):
 
         self.logger = logging.getLogger("NfnCreatePicturae")
@@ -327,7 +327,7 @@ class NfnCsvCreate():
 
             # Run LLM if appropriate; otherwise keep as-is
             if do_llm and not all_blank:
-                resp = self.send_to_llm(json.dumps(payload), system_prompt=system_prompt, model=self.model)
+                resp = self.send_to_llm(json.dumps(payload), system_prompt=system_prompt)
                 if not isinstance(resp, dict):
                     self.logger.warning(f"coord set {i} - LLM failed: {resp}")
                     resp = payload.copy()
@@ -400,7 +400,7 @@ class NfnCsvCreate():
         self.master_csv['cleaned_habitat'] = cleaned_habitats
         self.master_csv['cleaned_spec_desc'] = cleaned_specimen_desc
 
-    def send_to_llm(self, user_input, system_prompt, model):
+    def send_to_llm(self, user_input, system_prompt):
         """building block function which posts the llm api request"""
         url = f"{self.ollama_url}/api/chat"
 
@@ -410,7 +410,7 @@ class NfnCsvCreate():
                 url,
                 headers={"Content-Type": "application/json"},
                 data=json.dumps({
-                    "model": f"{model}",
+                    "model": f"{self.model}",
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_input}
@@ -881,6 +881,6 @@ if __name__ == "__main__":
 
     picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file=args.input_file,
                                          logging_level=args.log_level,
-                                         hemisphere=args.hemisphere, model= args.model)
+                                         hemisphere=args.hemisphere, model=args.model)
     picturae_csv_instance.run_all_methods()
 
