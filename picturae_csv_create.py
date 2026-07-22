@@ -1393,7 +1393,7 @@ class CsvCreatePicturae:
             barcode = row['CatalogNumber']
             barcode = barcode.zfill(9)
             sql = f'''select CatalogNumber from collectionobject
-                      where CatalogNumber = {barcode};'''
+                      where CatalogNumber = "{barcode}";'''
             self.logger.info(f"running query: {sql}")
             db_barcode = self.specify_db_connection.get_one_record(sql)
             if db_barcode is None:
