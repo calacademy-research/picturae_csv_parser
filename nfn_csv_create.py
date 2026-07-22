@@ -20,7 +20,7 @@ from coordinate_parser.parser import parse_coordinate
 # https://pypi.org/project/coordinate-parser/
 
 class NfnCsvCreate():
-    def __init__(self, coll, input_file, logging_level, hemisphere):
+    def __init__(self, coll, input_file,  model,  logging_level, hemisphere):
 
         self.logger = logging.getLogger("NfnCreatePicturae")
         self.logger.setLevel(logging_level)
@@ -43,6 +43,8 @@ class NfnCsvCreate():
         self.ollama_url = self.config.OLLAMA_URL
 
         self.hemisphere = hemisphere
+
+        self.model = model
 
         self.nominatum_dict = {}
 
@@ -325,7 +327,7 @@ class NfnCsvCreate():
 
             # Run LLM if appropriate; otherwise keep as-is
             if do_llm and not all_blank:
-                resp = self.send_to_llm(json.dumps(payload), system_prompt=system_prompt)
+                resp = self.send_to_llm(json.dumps(payload), system_prompt=system_prompt, model=self.model)
                 if not isinstance(resp, dict):
                     self.logger.warning(f"coord set {i} - LLM failed: {resp}")
                     resp = payload.copy()
@@ -398,16 +400,17 @@ class NfnCsvCreate():
         self.master_csv['cleaned_habitat'] = cleaned_habitats
         self.master_csv['cleaned_spec_desc'] = cleaned_specimen_desc
 
-    def send_to_llm(self, user_input, system_prompt):
-        """building block function which posts the llm api request, assumes default llama3:70b"""
+    def send_to_llm(self, user_input, system_prompt, model):
+        """building block function which posts the llm api request"""
         url = f"{self.ollama_url}/api/chat"
+
         try:
             self.logger.info(f"Sending request to: {url}")
             response = requests.post(
                 url,
                 headers={"Content-Type": "application/json"},
                 data=json.dumps({
-                    "model": "llama3:70b",
+                    "model": f"{model}",
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_input}
@@ -869,6 +872,8 @@ if __name__ == "__main__":
                         default="NorthWest", choices=['NorthWest', 'NorthEast', 'SouthWest', 'SouthEast'],
                         help="the hemisphere quadrant the dataset is covering, to standardize +, - numeric lat/longs"
                         )
+    parser.add_argument('-m', '--model', nargs="?", default=None,
+                        help="name of model to instruct ollama to use")
 
     args = parser.parse_args()
 
@@ -876,6 +881,6 @@ if __name__ == "__main__":
 
     picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file=args.input_file,
                                          logging_level=args.log_level,
-                                         hemisphere=args.hemisphere)
+                                         hemisphere=args.hemisphere, model= args.model)
     picturae_csv_instance.run_all_methods()
 
