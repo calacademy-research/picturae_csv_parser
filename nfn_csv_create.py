@@ -13,6 +13,7 @@ import json
 import requests
 import argparse
 import math
+import re
 from label_reconciliations.core import run_on_dataframe
 from coordinate_parser.parser import parse_coordinate
 
@@ -433,25 +434,45 @@ class NfnCsvCreate:
             return "Error"
 
     def clean_and_parse_json5(self, raw_text):
-        """parses json output of LLM functions"""
+        """Extract and parse a JSON/JSON5 object returned by the LLM."""
+
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            self.logger.error("LLM returned an empty response")
+            return "Error"
+
         try:
-            # Remove markdown formatting (e.g., ```json)
-            cleaned = raw_text.strip().lstrip("`").rstrip("`")
-            # Find the first open brace
+            cleaned = raw_text.strip()
+
+            cleaned = re.sub(
+                r"^\s*```(?:json5?|javascript)?\s*",
+                "",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+
+            # Extract only the JSON object, excluding text or backticks after it.
             start = cleaned.find("{")
+            end = cleaned.rfind("}")
+
             if start == -1:
                 raise ValueError("No opening brace found")
-            # Manually extract everything from the first brace
-            json_candidate = cleaned[start:]
-            # If there's no closing brace, add one
-            if not json_candidate.strip().endswith("}"):
-                json_candidate += "}"
-            # Try parsing
+
+            if end == -1 or end < start:
+                raise ValueError("No closing brace found")
+
+            json_candidate = cleaned[start:end + 1]
+
             return json5.loads(json_candidate)
+
         except Exception as e:
-            self.logger.error(f"Could not clean/parse JSON5 from text: {raw_text}")
-            self.logger.error(f"Parsing error detail: {e}")
+            self.logger.error(
+                "Could not clean/parse JSON5 from text: %r",
+                raw_text,
+            )
+            self.logger.error("Parsing error detail: %s", e)
             return "Error"
+
 
     def has_matching_substring(self, row, column1, column2):
         fullname_parts = str(row[column1]).split()  # Split fullname into parts
@@ -884,3 +905,4 @@ if __name__ == "__main__":
                                          hemisphere=args.hemisphere, model=args.model)
     picturae_csv_instance.run_all_methods()
 
+®
