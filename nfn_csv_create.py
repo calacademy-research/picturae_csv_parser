@@ -809,6 +809,7 @@ class NfnCsvCreate:
         return unrec_df, rec_df
 
     def run_all_methods(self):
+        """master function which runs each cleaning step"""
         self.rename_columns()
         self.remove_records()
         for index, row in self.master_csv.iterrows():
