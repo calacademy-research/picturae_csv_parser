@@ -1193,7 +1193,7 @@ class CsvCreatePicturae:
                 dbname="gis",
                 user="postgres",
                 password="postgres",
-                port=5432,
+                port=pic_config.GADM_PORT,
                 adm1_table="public.gadm",
             )
 
