@@ -38,6 +38,67 @@ class ImportLlama:
 
         return str(value).strip().lower() in {"", "nan", "none", "null", "unknown", "unkown"}
 
+    def remove_artifacts(self):
+        """
+        Clean artifacts from every text column.
+
+        Removes:
+            - {...} and enclosed content
+            - <...> and enclosed content
+            - ##...## and enclosed content
+            - cells containing only quotes, backticks, hashes, $, or whitespace
+            - placeholder values such as "empty"
+        """
+        string_columns = self.record_full.select_dtypes(
+            include=["object", "string"]
+        ).columns
+
+        def clean_value(value):
+            if pd.isna(value):
+                return pd.NA
+
+            text = str(value)
+
+            # Repeatedly remove nested enclosed artifacts.
+            for _ in range(10):
+                previous = text
+
+                text = re.sub(r"\{[^{}]*\}", "", text, flags=re.DOTALL)
+                text = re.sub(r"<[^<>]*>", "", text, flags=re.DOTALL)
+                text = re.sub(r"##.*?##", "", text, flags=re.DOTALL)
+
+                if text == previous:
+                    break
+
+            # Remove unmatched enclosure characters and normalize whitespace.
+            text = re.sub(r"[<>{}]", "", text)
+            text = re.sub(r"\s+", " ", text).strip()
+
+            # Remove cells containing only artifact characters.
+            meaningful_text = re.sub(
+                r"""["'`“”‘’#$\s]""",
+                "",
+                text,
+            )
+
+            if not meaningful_text:
+                return pd.NA
+
+            if meaningful_text.lower() in {
+                "empty",
+                "none",
+                "null",
+                "nan",
+                "unknown",
+            }:
+                return pd.NA
+
+            return text
+
+        self.record_full[string_columns] = self.record_full[
+            string_columns
+        ].apply(lambda column: column.map(clean_value))
+
     def parse_list_value(self, value):
         """
         Convert a CSV cell into a Python list.
@@ -151,7 +212,6 @@ class ImportLlama:
             elevation_max,
             selected_unit,
         ])
-
 
 
     def parse_elevation_unit(self, value):
@@ -323,6 +383,9 @@ class ImportLlama:
             self.coordinate_conversion_failed, axis=1)
 
     def clean_llamaframe(self):
+        # remove bracketed llm artifacts.
+        self.remove_artifacts()
+
         # Split elevation values.
         self.record_full[["elevation_min", "elevation_max", "elevation_unit"]] = self.record_full.apply(
                         lambda row: self.parse_elevation_data(row["_elevationValues"], row["elevationUnits"]), axis=1)
@@ -339,9 +402,9 @@ class ImportLlama:
 
         input_basename = os.path.splitext(os.path.basename(self.csv_path))[0]
 
-        output_path = os.path.join(output_directory,f"{input_basename}_output.csv")
+        output_path = os.path.join(output_directory, f"{input_basename}_output.csv")
 
-        self.record_full.to_csv(output_path,index=False)
+        self.record_full.to_csv(output_path, index=False)
 
         logging.info(f"Cleaned CSV written to: {output_path}")
 
