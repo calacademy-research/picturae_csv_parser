@@ -4,7 +4,7 @@ from collections import defaultdict
 import os
 from get_configs import get_config
 from sql_csv_utils import SqlCsvTools
-from string_utils import remove_non_numerics
+from string_utils import remove_non_numerics, detect_is_empty
 import numpy as np
 import csv
 import logging
@@ -106,20 +106,6 @@ class NfnCsvCreate:
         inner = next(iter(d.values()))
         return inner.get(value, None)
 
-    def detect_is_empty(self, string) -> bool:
-        """method to detect if a string type variable contains none or none-like value.
-           Returns True and False
-        """
-        if string is None:
-            return True
-        try:
-            if isinstance(string, float) and math.isnan(string):
-                return True
-        except Exception:
-            pass
-        s = str(string).strip().lower()
-        return s in ("", "nan", "none", "null", 'unknown', 'unkown')
-
     def unpack_json(self):
         """function used to unpack json blobs in standard nfn classification ouput"""
 
@@ -219,7 +205,7 @@ class NfnCsvCreate:
         elif min_elevation == max_elevation:
             max_elevation = ''
 
-        is_unknown = self.detect_is_empty(elevation_unit)
+        is_unknown = detect_is_empty(elevation_unit)
 
         if not str(min_elevation).endswith("0") and is_unknown:
             min_elevation = ''
@@ -232,7 +218,7 @@ class NfnCsvCreate:
                 elevation_unit = 'm'
 
         # emptying out single digit entries
-        if ((len(min_elevation) <= 1 and not self.detect_is_empty(min_elevation))
+        if ((len(min_elevation) <= 1 and not detect_is_empty(min_elevation))
                 or len(min_elevation) > 5):
             min_elevation = ''
             max_elevation = ''
@@ -258,14 +244,14 @@ class NfnCsvCreate:
             and standardizes empty entries into [No Accession].
         """
         acc_num = str(acc_num).strip()
-        if acc_num == "[No Accession]" or self.detect_is_empty(acc_num) or acc_num == "":
+        if acc_num == "[No Accession]" or detect_is_empty(acc_num) or acc_num == "":
             acc_num = "[No Accession]"
         elif (len(remove_non_numerics(acc_num)) < len(acc_num)) or (len(remove_non_numerics(acc_num)) > 10):
             acc_num = ""
         return acc_num
 
     def regex_check_coord(self, coord: str, regex_pattern, max_num: int):
-        if coord and not self.detect_is_empty(coord):
+        if coord and not detect_is_empty(coord):
             # If regex pattern is found anywhere within the coord
             match = regex_pattern.search(coord)
             if match:
@@ -324,7 +310,7 @@ class NfnCsvCreate:
                 "Datum": str(row_dict.get(f"Utm_datum_{i}", "")),
             }
 
-            all_blank = all(self.detect_is_empty(v) for v in payload.values())
+            all_blank = all(detect_is_empty(v) for v in payload.values())
 
             # Run LLM if appropriate; otherwise keep as-is
             if do_llm and not all_blank:
@@ -347,8 +333,8 @@ class NfnCsvCreate:
             utm_northing_r = resp.get("Utm_northing", "")
             datum_r = resp.get("Datum", "")
 
-            trs_blank = all(self.detect_is_empty(x) for x in (township, range_, section))
-            utm_blank = all(self.detect_is_empty(x) for x in (utm_zone_r, utm_easting_r, utm_northing_r))
+            trs_blank = all(detect_is_empty(x) for x in (township, range_, section))
+            utm_blank = all(detect_is_empty(x) for x in (utm_zone_r, utm_easting_r, utm_northing_r))
 
             if trs_blank:
                 quadrangle = ""
@@ -537,11 +523,11 @@ class NfnCsvCreate:
 
         for i in range(1, matches + 1):
             for col in (f"lat_verbatim_{i}", f"long_verbatim_{i}"):
-                if col in row.index and not self.detect_is_empty(row[col]):
+                if col in row.index and not detect_is_empty(row[col]):
                     verb_count += 1
 
             for col in (f"lat_numeric_{i}", f"long_numeric_{i}"):
-                if col in row.index and not self.detect_is_empty(row[col]):
+                if col in row.index and not detect_is_empty(row[col]):
                     num_count += 1
 
         if verb_count == 0:
@@ -787,7 +773,7 @@ class NfnCsvCreate:
 
         for col in ("Township_2", "Utm_northing_2", "lat_verbatim_2"):
             val = get_val(col)
-            if not self.detect_is_empty(val):
+            if not detect_is_empty(val):
                 return True
         return False
 
