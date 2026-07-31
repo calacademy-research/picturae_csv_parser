@@ -143,15 +143,9 @@ class ImportLlama:
                 if item.strip()
             ]
 
-    def parse_elevation_data(self, elevation_values, elevation_units):
+    def parse_elevation_data(self, elevation_values, elevation_units, verbatim_elevation):
         """
         Pair elevations with units and select the most likely elevation range.
-
-        Rules:
-            - One unit applies to every value, e.g. 200-300 ft.
-            - Ignore dm and unknown units.
-            - Select the unit with the most values.
-            - Meters win when meter and feet counts are tied.
         """
 
         values = self.parse_list_value(elevation_values)
@@ -160,13 +154,13 @@ class ImportLlama:
         if not values or not units:
             return pd.Series([pd.NA, pd.NA, pd.NA])
 
-        # A single trailing unit applies to all values:
         if len(units) == 1 and len(values) > 1:
             units = units * len(values)
 
         elevations_by_unit = {
             "m": [],
             "ft": [],
+            "dm": [],
         }
 
         for value, unit in zip(values, units):
@@ -177,7 +171,6 @@ class ImportLlama:
 
             normalized_unit = self.parse_elevation_unit(unit)
 
-            # Ignore dm and unknown units.
             if normalized_unit not in elevations_by_unit:
                 continue
 
@@ -185,12 +178,18 @@ class ImportLlama:
 
         meter_count = len(elevations_by_unit["m"])
         feet_count = len(elevations_by_unit["ft"])
+        dm_count = len(elevations_by_unit["dm"])
 
-        if meter_count == 0 and feet_count == 0:
+        if meter_count == 0 and feet_count == 0 and dm_count == 0:
             return pd.Series([pd.NA, pd.NA, pd.NA])
 
-        # defers to unit with more values; meters wins a tie.
-        selected_unit = "m" if meter_count >= feet_count else "ft"
+        # Prefer whichever usable unit has more values.
+        # Meters win ties.
+        if meter_count > 0 or feet_count > 0:
+            selected_unit = "m" if meter_count >= feet_count else "ft"
+        else:
+            selected_unit = "dm"
+
         selected_values = elevations_by_unit[selected_unit]
 
         elevation_min = min(selected_values)
@@ -201,8 +200,30 @@ class ImportLlama:
             else pd.NA
         )
 
-        if pd.notna(elevation_max) and elevation_min == elevation_max:
+        if (
+                pd.notna(elevation_max)
+                and elevation_min == elevation_max
+        ):
             elevation_max = pd.NA
+
+        # Clear dm-only elevation results.
+        elevation_min, elevation_max, selected_unit = (
+            self.remove_dm_elevations(
+                elevation_min,
+                elevation_max,
+                selected_unit,
+            )
+        )
+
+        # Clear likely plant-height measurements.
+        elevation_min, elevation_max, selected_unit = (
+            self.remove_plant_height_elev(
+                elevation_min,
+                elevation_max,
+                selected_unit,
+                verbatim_elevation,
+            )
+        )
 
         return pd.Series([
             elevation_min,
@@ -248,7 +269,7 @@ class ImportLlama:
         return pd.NA
 
 
-    def remove_dm_elevations(self):
+    def remove_dm_elevations(self, elevation_min, elevation_max, elevation_unit):
         """
         Empty the parsed elevation fields for rows whose only detected
         elevation unit is dm.
@@ -256,48 +277,36 @@ class ImportLlama:
         Rows containing dm together with ft or m are preserved because
         parse_elevation_unit() prioritizes ft and m.
         """
-        dm_mask = self.record_full["elevation_unit"].eq("dm")
+        if elevation_unit == "dm":
+            return pd.NA, pd.NA, pd.NA
 
-        columns_to_empty = [
-            "elevation_min",
-            "elevation_max",
-            "elevation_unit",
-        ]
+        return elevation_min, elevation_max, elevation_unit
 
-        self.record_full.loc[dm_mask, columns_to_empty] = pd.NA
 
-        logging.info(
-            "Removed elevation data from %s dm-only rows.",
-            int(dm_mask.sum()),
-        )
-
-    def remove_plant_height_elev(self):
+    def remove_plant_height_elev(self, elevation_min,elevation_max, elevation_unit, verbatim_elevation,):
         """
         Clear single elevation values when VerbatimElevation suggests
         the number describes plant height rather than geographic elevation.
         """
-        no_max = self.record_full["elevation_max"].isna() | (
-                self.record_full["elevation_max"].astype("string").str.strip() == ""
+        no_max = (
+                pd.isna(elevation_max)
+                or str(elevation_max).strip() == ""
         )
 
-        plant_height = (
-            self.record_full["verbatimElevation"]
-            .astype("string")
-            .str.contains(r"tall|high|height", case=False, na=False)
+        contains_plant_height = (
+                not self.detect_is_empty(verbatim_elevation)
+                and re.search(
+            r"tall|high|height",
+            str(verbatim_elevation),
+            flags=re.IGNORECASE,
+        )
+                is not None
         )
 
-        mask = no_max & plant_height
+        if no_max and contains_plant_height:
+            return pd.NA, pd.NA, pd.NA
 
-        self.record_full.loc[
-            mask,
-            ["elevation_min", "elevation_max", "elevation_unit"],
-        ] = pd.NA
-
-        logging.info(
-            "Removed %s probable plant-height elevations.",
-            int(mask.sum()),
-        )
-
+        return elevation_min, elevation_max, elevation_unit
 
     def safe_parse_coordinate(self, coordinate, coordinate_type):
         """
@@ -414,12 +423,9 @@ class ImportLlama:
 
         # Split elevation values.
         self.record_full[["elevation_min", "elevation_max", "elevation_unit"]] = self.record_full.apply(
-                        lambda row: self.parse_elevation_data(row["_elevationValues"], row["elevationUnits"]), axis=1)
+                        lambda row: self.parse_elevation_data(row["_elevationValues"], row["elevationUnits"],
+                                                              row["verbatimElevation"]), axis=1)
 
-        # removing plant height measurements from elevation
-        self.remove_dm_elevations()
-
-        self.remove_plant_height_elev()
 
         # Convert the single latitude/longitude pair.
         self.clean_coordinates()
