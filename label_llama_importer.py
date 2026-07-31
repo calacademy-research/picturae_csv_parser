@@ -5,9 +5,10 @@ import os
 import logging
 import re
 
+import numpy as np
 import pandas as pd
 from coordinate_parser.parser import parse_coordinate
-from string_utils import remove_non_numerics
+from string_utils import remove_non_numerics, detect_is_empty
 from BOT_database_updater import UpdateBotDbFields
 
 class ImportLlama:
@@ -22,21 +23,6 @@ class ImportLlama:
         )
 
         self.clean_llamaframe()
-
-    def detect_is_empty(self, value) -> bool:
-        """
-        Detect empty or none-like values.
-        """
-        if value is None:
-            return True
-
-        try:
-            if isinstance(value, float) and math.isnan(value):
-                return True
-        except (TypeError, ValueError):
-            pass
-
-        return str(value).strip().lower() in {"", "nan", "none", "null", "unknown", "unkown"}
 
     def remove_artifacts(self):
         """
@@ -99,6 +85,9 @@ class ImportLlama:
             string_columns
         ].apply(lambda column: column.map(clean_value))
 
+
+
+
     def parse_list_value(self, value):
         """
         Convert a CSV cell into a Python list.
@@ -111,7 +100,7 @@ class ImportLlama:
             {[450.0, 1500.0]}
             m
         """
-        if self.detect_is_empty(value):
+        if detect_is_empty(value):
             return []
 
         value_string = str(value).strip()
@@ -246,7 +235,7 @@ class ImportLlama:
         This ensures values containing both "dm" and "ft" or "m"
         retain the usable ft/m unit.
         """
-        if self.detect_is_empty(value):
+        if detect_is_empty(value):
             return pd.NA
 
         unit = str(value).lower().strip()
@@ -294,7 +283,7 @@ class ImportLlama:
         )
 
         contains_plant_height = (
-                not self.detect_is_empty(verbatim_elevation)
+                not detect_is_empty(verbatim_elevation)
                 and re.search(
             r"tall|high|height",
             str(verbatim_elevation),
@@ -317,7 +306,7 @@ class ImportLlama:
         Explicit N/S/E/W values take precedence over the default
         hemisphere.
         """
-        if self.detect_is_empty(coordinate):
+        if detect_is_empty(coordinate):
             return math.nan
 
         try:
@@ -375,9 +364,9 @@ class ImportLlama:
         A row is also flagged when only one member of the coordinate
         pair is present.
         """
-        verbatim_latitude_present = not self.detect_is_empty(row.get("verbatimLatitude"))
+        verbatim_latitude_present = not detect_is_empty(row.get("verbatimLatitude"))
 
-        verbatim_longitude_present = not self.detect_is_empty(row.get("verbatimLongitude"))
+        verbatim_longitude_present = not detect_is_empty(row.get("verbatimLongitude"))
 
         latitude_converted = pd.notna(row.get("latitude"))
         longitude_converted = pd.notna(row.get("longitude"))
@@ -418,13 +407,21 @@ class ImportLlama:
             self.coordinate_conversion_failed, axis=1)
 
     def clean_llamaframe(self):
+
         # remove bracketed llm artifacts.
         self.remove_artifacts()
+
 
         # Split elevation values.
         self.record_full[["elevation_min", "elevation_max", "elevation_unit"]] = self.record_full.apply(
                         lambda row: self.parse_elevation_data(row["_elevationValues"], row["elevationUnits"],
                                                               row["verbatimElevation"]), axis=1)
+
+        #standardize empty cells:
+        self.record_full = self.record_full.replace({r"^\s*$": pd.NA,
+                                                     r"^(?i:nan|none|null|unknown|unkown|empty|<na>)$": pd.NA},
+                                                    regex=True,
+        )
 
 
         # Convert the single latitude/longitude pair.
