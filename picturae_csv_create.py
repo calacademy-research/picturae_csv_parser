@@ -877,6 +877,12 @@ class CsvCreatePicturae:
 
             flagged_data[key] = batch_to_items
 
+            if key == "missing_label":
+                self.logger.warning(
+                    f"{message_dict[key]}\n{formatted_batches}"
+                )
+                continue
+
             message_parts.append(
                 f"{message_dict[key]}\n{formatted_batches}"
             )
