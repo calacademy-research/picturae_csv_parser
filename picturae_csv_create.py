@@ -673,14 +673,18 @@ class CsvCreatePicturae:
 
         # flags verbatim date too long greater than 50 char and stores them in new label_data column
 
-        invalid_verbatim_mask = self.record_full["verbatim_date"].str.len() > 50
+        invalid_verbatim_mask = (self.record_full["verbatim_date"].fillna("").astype(str).str.len() > 50)
 
         # adding lable data and new genus boolean
-        self.record_full['label_data'] = ""
-        self.record_full['new_genus'] = False
+        if "label_data" not in self.record_full.columns:
+            self.record_full["label_data"] = ""
 
-        self.record_full.loc[invalid_verbatim_mask, 'label_data'] = self.record_full.loc[
-            invalid_verbatim_mask, 'verbatim_date']
+        if "new_genus" not in self.record_full.columns:
+            self.record_full["new_genus"] = False
+
+        self.save_long_verbatim_dates(invalid_verbatim_mask)
+
+        self.restore_long_verbatim_to_label_data()
 
         invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
 
@@ -880,6 +884,119 @@ class CsvCreatePicturae:
         if message_parts:
             raise ValueError("\n\n".join(message_parts))
 
+
+    def save_long_verbatim_dates(self, invalid_verbatim_mask):
+        """
+        Persist the original long verbatim dates before the user fixes
+        them in the source CSVs.
+
+        Existing saved values are preserved so that rerunning after
+        source correction does not lose the original text.
+        """
+        overflow_path = os.path.join(
+            self.dir_path,
+            "verbatim_date_overflow.csv"
+        )
+
+        overflow = self.record_full.loc[
+            invalid_verbatim_mask,
+            ["CSV_batch", "CatalogNumber", "verbatim_date"]
+        ].copy()
+
+        if overflow.empty:
+            return
+
+        overflow.rename(
+            columns={"verbatim_date": "original_verbatim_date"},
+            inplace=True
+        )
+
+        # Normalize keys
+        overflow["CSV_batch"] = overflow["CSV_batch"].astype(str).str.strip()
+        overflow["CatalogNumber"] = overflow["CatalogNumber"].astype(str).str.strip()
+
+        if os.path.isfile(overflow_path):
+            existing = pd.read_csv(
+                overflow_path,
+                dtype=str,
+                keep_default_na=False
+            )
+
+            overflow = pd.concat(
+                [existing, overflow],
+                ignore_index=True
+            )
+
+            # IMPORTANT:
+            # keep="first" means once an original long value has been
+            # captured, a later run cannot overwrite it.
+            overflow.drop_duplicates(
+                subset=["CSV_batch", "CatalogNumber"],
+                keep="first",
+                inplace=True
+            )
+
+        overflow.to_csv(
+            overflow_path,
+            index=False
+        )
+
+
+    def restore_long_verbatim_to_label_data(self):
+        """
+        Populate label_data from verbatim_date_overflow.csv.
+
+        This allows the original long verbatim date to survive after
+        verbatim_date has been manually corrected in the source CSV.
+        """
+        overflow_path = os.path.join(
+            self.dir_path,
+            "verbatim_date_overflow.csv"
+        )
+
+        if "label_data" not in self.record_full.columns:
+            self.record_full["label_data"] = ""
+
+        if not os.path.isfile(overflow_path):
+            return
+
+        overflow = pd.read_csv(
+            overflow_path,
+            dtype=str,
+            keep_default_na=False
+        )
+
+        overflow["CSV_batch"] = overflow["CSV_batch"].astype(str).str.strip()
+        overflow["CatalogNumber"] = overflow["CatalogNumber"].astype(str).str.strip()
+
+        lookup = (
+            overflow
+            .drop_duplicates(
+                subset=["CSV_batch", "CatalogNumber"],
+                keep="first"
+            )
+            .set_index(["CSV_batch", "CatalogNumber"])
+            ["original_verbatim_date"]
+            .to_dict()
+        )
+
+        def get_original(row):
+            key = (
+                str(row["CSV_batch"]).strip(),
+                str(row["CatalogNumber"]).strip()
+            )
+
+            return lookup.get(key, "")
+
+        saved_values = self.record_full.apply(
+            get_original,
+            axis=1
+        )
+
+        # Only populate rows that have a saved overflow value.
+        mask = saved_values.astype(str).str.strip().ne("")
+
+        self.record_full.loc[mask, "label_data"] = saved_values.loc[mask]
 
 
     def safe_parse_coord(
