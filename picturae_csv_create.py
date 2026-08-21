@@ -1858,11 +1858,18 @@ class CsvCreatePicturae:
             taxon_correct_table = taxon_to_correct[['CSV_batch', 'fullname',
                                                     'name_matched', 'overall_score']].drop_duplicates()
 
+            taxon_correct_table = taxon_correct_table.sort_values(
+                by=['CSV_batch', 'CatalogNumber']
+            )
+
             assert len(taxon_correct_table) <= 0
 
         except:
-            raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
-                                      f'the following batches: {taxon_correct_table.to_string()}')
+            raise IncorrectTaxonError(
+                f'TNRS has rejected taxonomic names at '
+                f'the following batches:\n{taxon_correct_table.to_string(index=False)}'
+            )
+
 
     def read_and_merge_image_manifest(self):
         """to keep taxonomic family consistent with herbarium cabinet order,
