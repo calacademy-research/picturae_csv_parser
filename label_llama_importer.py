@@ -132,25 +132,56 @@ class ImportLlama:
                 if item.strip()
             ]
 
-    def parse_elevation_data(self, elevation_values, elevation_units, verbatim_elevation):
-        """
-        Pair elevations with units and select the most likely elevation range.
-        """
+    def get_verbatim_elevation_pairs(self, verbatim_elevation):
+        if detect_is_empty(verbatim_elevation):
+            return []
 
-        values = self.parse_list_value(elevation_values)
-        units = self.parse_list_value(elevation_units)
+        text = str(verbatim_elevation)
 
-        if not values or not units:
-            return pd.Series([pd.NA, pd.NA, pd.NA])
+        matches = re.findall(
+            r"""
+            (?P<value>\d+(?:\.\d+)?)
+            \s*
+            (?P<unit>
+                ft\.?
+                | feet
+                | foot
+                | '
+                | m\.?
+                | meters?
+                | metres?
+                | dm
+            )
+            """,
+            text,
+            flags=re.IGNORECASE | re.VERBOSE,
+        )
 
-        if len(units) == 1 and len(values) > 1:
-            units = units * len(values)
+        pairs = []
 
-        elevations_by_unit = {
-            "m": [],
-            "ft": [],
-            "dm": [],
-        }
+        for value, unit in matches:
+            normalized_unit = self.parse_elevation_unit(unit)
+
+            if normalized_unit in {"m", "ft", "dm"}:
+                pairs.append((float(value), normalized_unit))
+
+        return pairs
+
+
+    def filter_pairs_to_verbatim(
+            self,
+            values,
+            units,
+            verbatim_elevation,
+    ):
+        allowed_pairs = self.get_verbatim_elevation_pairs(
+            verbatim_elevation
+        )
+
+        if not allowed_pairs:
+            return []
+
+        filtered_pairs = []
 
         for value, unit in zip(values, units):
             try:
@@ -160,26 +191,75 @@ class ImportLlama:
 
             normalized_unit = self.parse_elevation_unit(unit)
 
-            if normalized_unit not in elevations_by_unit:
-                continue
+            pair = (numeric_value, normalized_unit)
 
-            elevations_by_unit[normalized_unit].append(numeric_value)
+            if pair in allowed_pairs:
+                filtered_pairs.append(pair)
 
-        meter_count = len(elevations_by_unit["m"])
-        feet_count = len(elevations_by_unit["ft"])
-        dm_count = len(elevations_by_unit["dm"])
+        return filtered_pairs
 
-        if meter_count == 0 and feet_count == 0 and dm_count == 0:
+    def parse_elevation_data(self, elevation_values, elevation_units, verbatim_elevation):
+        """extract elevation values and ranges,
+             with meters taking priority over equivalent elevations in feet
+         """
+        values = self.parse_list_value(elevation_values)
+        units = self.parse_list_value(elevation_units)
+
+        if not values or not units:
             return pd.Series([pd.NA, pd.NA, pd.NA])
 
-        # Prefer whichever usable unit has more values.
-        # Meters win ties.
-        if meter_count > 0 or feet_count > 0:
-            selected_unit = "m" if meter_count >= feet_count else "ft"
-        else:
-            selected_unit = "dm"
+        # If one unit applies to multiple extracted values, use that unit
+        if len(units) == 1 and len(values) > 1:
+            units = units * len(values)
 
-        selected_values = elevations_by_unit[selected_unit]
+        # Any other mismatch is ambiguous.
+        elif len(values) != len(units):
+            return pd.Series([pd.NA, pd.NA, pd.NA])
+
+        pairs = self.filter_pairs_to_verbatim(
+            values,
+            units,
+            verbatim_elevation,
+        )
+
+        if not pairs:
+            return pd.Series([pd.NA, pd.NA, pd.NA])
+
+        for value, unit in zip(values, units):
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                continue
+
+            normalized_unit = self.parse_elevation_unit(unit)
+
+            if normalized_unit not in {"m", "ft"}:
+                continue
+
+            pairs.append((numeric_value, normalized_unit))
+
+        if not pairs:
+            return pd.Series([pd.NA, pd.NA, pd.NA])
+
+        values_by_unit = {
+            "m": [value for value, unit in pairs if unit == "m"],
+            "ft": [value for value, unit in pairs if unit == "ft"],
+        }
+
+        meter_values = values_by_unit["m"]
+        feet_values = values_by_unit["ft"]
+
+        # Select the unit with the most aligned values.
+        # Meters win ties.
+        if len(meter_values) >= len(feet_values):
+            selected_values = meter_values
+            selected_unit = "m"
+        else:
+            selected_values = feet_values
+            selected_unit = "ft"
+
+        if not selected_values:
+            return pd.Series([pd.NA, pd.NA, pd.NA])
 
         elevation_min = min(selected_values)
 
@@ -195,16 +275,6 @@ class ImportLlama:
         ):
             elevation_max = pd.NA
 
-        # Clear dm-only elevation results.
-        elevation_min, elevation_max, selected_unit = (
-            self.remove_dm_elevations(
-                elevation_min,
-                elevation_max,
-                selected_unit,
-            )
-        )
-
-        # Clear likely plant-height measurements.
         elevation_min, elevation_max, selected_unit = (
             self.remove_plant_height_elev(
                 elevation_min,
@@ -219,8 +289,6 @@ class ImportLlama:
             elevation_max,
             selected_unit,
         ])
-
-
 
     def parse_elevation_unit(self, value):
         """
@@ -248,7 +316,7 @@ class ImportLlama:
         if re.search(r"\bp\.?\s*s\.?\s*m\.?\b", unit):
             return "ft"
 
-        if re.search(r"\b(?:ft|foot|feet)\b", unit):
+        if re.search(r"(?:\bft\b|\bfoot\b|\bfeet\b|')", unit):
             return "ft"
 
         # Only return dm when no usable ft or m unit was found.
@@ -277,22 +345,43 @@ class ImportLlama:
         Clear single elevation values when VerbatimElevation suggests
         the number describes plant height rather than geographic elevation.
         """
-        no_max = (
-                pd.isna(elevation_max)
-                or str(elevation_max).strip() == ""
+
+        if detect_is_empty(verbatim_elevation):
+            return elevation_min, elevation_max, elevation_unit
+
+        text = str(verbatim_elevation)
+
+        plant_height_pattern = re.compile(
+            r"""
+            \b
+            \d+(?:\.\d+)?          # first number
+            \s*[-–—]\s*            # hyphen/en-dash/em-dash
+            \d+(?:\.\d+)?          # second number
+            \s*
+            (?:ft|feet|foot|m|meter|meters|metre|metres|dm)?
+            \.?
+            \s*
+            (?:tall|high|height)
+            \b
+            """,
+            flags=re.IGNORECASE | re.VERBOSE,
         )
 
-        contains_plant_height = (
-                not detect_is_empty(verbatim_elevation)
-                and re.search(
-            r"tall|high|height",
-            str(verbatim_elevation),
-            flags=re.IGNORECASE,
-        )
-                is not None
+        single_height_pattern = re.compile(
+            r"""
+            \b
+            \d+(?:\.\d+)?
+            \s*
+            (?:ft|feet|foot|m|meter|meters|metre|metres|dm)?
+            \.?
+            \s*
+            (?:tall|high|height)
+            \b
+            """,
+            flags=re.IGNORECASE | re.VERBOSE,
         )
 
-        if no_max and contains_plant_height:
+        if plant_height_pattern.search(text) or single_height_pattern.search(text):
             return pd.NA, pd.NA, pd.NA
 
         return elevation_min, elevation_max, elevation_unit
@@ -418,11 +507,9 @@ class ImportLlama:
                                                               row["verbatimElevation"]), axis=1)
 
         #standardize empty cells:
-        self.record_full = self.record_full.replace({r"^\s*$": pd.NA,
-                                                     r"^(?i:nan|none|null|unknown|unkown|empty|<na>)$": pd.NA},
-                                                    regex=True,
-        )
-
+        self.record_full = self.record_full.replace(r"(?i)^\s*(nan|none|null|unknown|unkown|empty|<na>|\(empty\)|"
+                                                    r"\(empty string\))\s*$",
+                                                    pd.NA, regex=True)
 
         # Convert the single latitude/longitude pair.
         self.clean_coordinates()
