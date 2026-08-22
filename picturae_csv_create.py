@@ -43,9 +43,8 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, verify_region, min_digits=7,):
+    def __init__(self, config, tnrs_ignore, logging_level, verify_region, min_digits=7,):
         self.tnrs_ignore = str_to_bool(tnrs_ignore)
-        self.covered_ignore = str_to_bool(covered_ignore)
         self.verify_region = verify_region
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
@@ -830,7 +829,7 @@ class CsvCreatePicturae:
 
         for key, csv_data in data_flag_dict.items():
 
-            if key == "missing_label" and self.covered_ignore:
+            if key == "missing_label":
                 continue
 
             if len(csv_data) == 0:
@@ -1977,10 +1976,6 @@ if __name__ == "__main__":
                                                                               "ignore TNRS' matched name "
                                                                               "for taxa that score < .99")
 
-    parser.add_argument("-ci", "--covered_ignore", nargs="?",
-                        required=False, help="True or False choice to ignore warnings for covered/folded specimens",
-                        default=False)
-
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: %(default)s)")
@@ -1998,5 +1993,4 @@ if __name__ == "__main__":
     pic_config = get_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
-                                              tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore,
-                                              verify_region=args.verify_region)
+                                              tnrs_ignore=args.tnrs_ignore, verify_region=args.verify_region)
