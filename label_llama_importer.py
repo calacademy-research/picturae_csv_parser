@@ -133,37 +133,67 @@ class ImportLlama:
             ]
 
     def get_verbatim_elevation_pairs(self, verbatim_elevation):
+        """extracts numeric elevation value from sets"""
         if detect_is_empty(verbatim_elevation):
             return []
 
         text = str(verbatim_elevation)
 
-        matches = re.findall(
-            r"""
-            (?P<value>\d+(?:\.\d+)?)
-            \s*
-            (?P<unit>
-                ft\.?
-                | feet
-                | foot
-                | '
-                | m\.?
-                | meters?
-                | metres?
-                | dm
-            )
-            """,
+        pairs = []
+
+        number_pattern = r"\d[\d,]*(?:\.\d+)?"
+        unit_pattern = r"(?:ft\.?|feet|foot|'|m\.?|meters?|metres?|dm)"
+
+        # Ranges where one unit applies to both values.
+        range_matches = re.findall(
+            rf"""
+                (?P<minimum>{number_pattern})
+                \s*[-–—]\s*
+                (?P<maximum>{number_pattern})
+                \s*
+                (?P<unit>{unit_pattern})
+                """,
             text,
             flags=re.IGNORECASE | re.VERBOSE,
         )
 
-        pairs = []
-
-        for value, unit in matches:
+        for minimum, maximum, unit in range_matches:
             normalized_unit = self.parse_elevation_unit(unit)
 
             if normalized_unit in {"m", "ft", "dm"}:
-                pairs.append((float(value), normalized_unit))
+                pairs.append((
+                    float(minimum.replace(",", "")),
+                    normalized_unit
+                ))
+                pairs.append((
+                    float(maximum.replace(",", "")),
+                    normalized_unit
+                ))
+
+        # Individual elevation values.
+        single_matches = re.findall(
+            rf"""
+                (?P<value>{number_pattern})
+                \s*
+                (?P<unit>{unit_pattern})
+                """,
+            text,
+            flags=re.IGNORECASE | re.VERBOSE,
+        )
+
+        for value, unit in single_matches:
+            normalized_unit = self.parse_elevation_unit(unit)
+
+            pair = (
+                float(value.replace(",", "")),
+                normalized_unit
+            )
+
+            if (
+                    normalized_unit in {"m", "ft", "dm"}
+                    and pair not in pairs
+            ):
+                pairs.append(pair)
 
         return pairs
 
@@ -198,10 +228,30 @@ class ImportLlama:
 
         return filtered_pairs
 
+
+    def parse_sea_level(self, verbatim_elevation):
+        """
+        if verbatim elevation contains sea level, set min elevation to 0
+        """
+        if detect_is_empty(verbatim_elevation):
+            return False
+
+        return (
+                re.search(
+                    r"\bsea\s+level\b",
+                    str(verbatim_elevation),
+                    flags=re.IGNORECASE,
+                )
+                is not None
+        )
+
     def parse_elevation_data(self, elevation_values, elevation_units, verbatim_elevation):
         """extract elevation values and ranges,
              with meters taking priority over equivalent elevations in feet
          """
+        if self.parse_sea_level(verbatim_elevation):
+            return pd.Series([0, pd.NA, pd.NA])
+
         values = self.parse_list_value(elevation_values)
         units = self.parse_list_value(elevation_units)
 
@@ -495,6 +545,38 @@ class ImportLlama:
         self.record_full["failed_coordinate_conversion"] = self.record_full.apply(
             self.coordinate_conversion_failed, axis=1)
 
+
+    def parse_columns(self):
+        """combines and extracts information from columns before dropping all but required columns for update."""
+
+        # extracting barcode
+        self.record_full["barcode"] = self.record_full["source"].apply(
+            lambda x: os.path.splitext(os.path.basename(x))[0]
+        )
+
+        # concatenating associated species to habitat.
+        self.record_full["habitat"] = (
+            self.record_full[["habitat", "associatedTaxa"]]
+            .fillna("")
+            .astype(str)
+            .apply(
+                lambda row: ". ".join(
+                    value.strip()
+                    for value in row
+                    if value.strip()
+                ),
+                axis=1,
+            )
+        )
+
+        # dropping uneeded columns
+        self.record_full.drop(columns=["status", "source", "text", "elapsed", "verbatimEventDate",
+                                       "recordedBy", "recordNumber", "identifiedBy", "dateIdentified",
+                                       "_elevationValues", "elevationEstimated", "ERROR"], inplace=True)
+
+        # renaming columns to updater standard
+        # self.record_full.rename()
+
     def clean_llamaframe(self):
 
         # remove bracketed llm artifacts.
@@ -521,6 +603,8 @@ class ImportLlama:
         input_basename = os.path.splitext(os.path.basename(self.csv_path))[0]
 
         output_path = os.path.join(output_directory, f"{input_basename}_output.csv")
+
+        self.parse_columns()
 
         self.record_full.to_csv(output_path, index=False)
 
