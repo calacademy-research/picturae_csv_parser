@@ -521,82 +521,91 @@ class ImportLlama:
         # Both verbatim values are present, but one or both failed.
         return not (latitude_converted and longitude_converted)
 
+
     def get_lat_long_unit(self, row):
         """
-        Determine the original latitude/longitude format.
+        Determine original latitude/longitude format.
 
         Returns:
             0 = Decimal degrees
             1 = Degrees/minutes/seconds (DMS)
             2 = Degrees/decimal minutes (DM)
         """
-        lat = ("" if detect_is_empty(row.get("verbatimLatitude")) else str(row.get("verbatimLatitude")).strip())
 
-        lon = ("" if detect_is_empty(row.get("verbatimLongitude")) else str(row.get("verbatimLongitude")).strip())
+        def classify_coordinate(value):
+            if detect_is_empty(value):
+                return None
 
-        coordinate_text = f"{lat} {lon}"
+            text = str(value).strip()
 
-        # Normalize Unicode prime symbols.
-        coordinate_text = (
-            coordinate_text
-            .replace("′", "'")
-            .replace("’", "'")
-            .replace("″", '"')
-            .replace("“", '"')
-            .replace("”", '"')
+            # Normalize common Unicode coordinate symbols.
+            text = (
+                text
+                .replace("′", "'")
+                .replace("’", "'")
+                .replace("″", '"')
+                .replace("“", '"')
+                .replace("”", '"')
+            )
+
+            # Remove hemisphere indicators so they don't interfere.
+            text = re.sub(
+                r"\b(?:N|S|E|W)\b\.?",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            # Extract numeric components.
+            numbers = re.findall(
+                r"\d+(?:\.\d+)?",
+                text,
+            )
+
+            # Explicit seconds marker -> DMS.
+            if '"' in text:
+                return 1
+
+            # Three numeric components:
+            if len(numbers) >= 3:
+                return 1
+
+            # Two numeric components:
+            if len(numbers) == 2:
+                return 2
+
+            # One numeric component:
+            if len(numbers) == 1:
+                return 0
+
+            return None
+
+        lat_unit = classify_coordinate(
+            row.get("verbatimLatitude")
         )
 
-        # DMS:
-        dms_patterns = [
-            r"""
-            \d+(?:\.\d+)?       # degrees
-            \s*°?\s*
-            \d+(?:\.\d+)?       # minutes
-            \s*[':]\s*
-            \d+(?:\.\d+)?       # seconds
-            \s*"?
-            """,
+        lon_unit = classify_coordinate(
+            row.get("verbatimLongitude")
+        )
 
-            r"""
-            \d+(?:\.\d+)?
-            \s*:\s*
-            \d+(?:\.\d+)?
-            \s*:\s*
-            \d+(?:\.\d+)?
-            """,
+        units = [
+            unit
+            for unit in (lat_unit, lon_unit)
+            if unit is not None
         ]
 
-        if any(
-                re.search(pattern, coordinate_text, flags=re.VERBOSE)
-                for pattern in dms_patterns
-        ):
+        if not units:
+            return 0
+
+        # If either coordinate is clearly DMS, preserve DMS.
+        if 1 in units:
             return 1
 
-        # DM:
-        dm_patterns = [
-            r"""
-            \d+(?:\.\d+)?       # degrees
-            \s*°?\s*
-            \d+(?:\.\d+)?       # minutes
-            \s*'
-            """,
-
-            r"""
-            \d+(?:\.\d+)?
-            \s*:\s*
-            \d+(?:\.\d+)?
-            """,
-        ]
-
-        if any(
-                re.search(pattern, coordinate_text, flags=re.VERBOSE)
-                for pattern in dm_patterns
-        ):
+        # Otherwise if either is DM, use DM.
+        if 2 in units:
             return 2
 
-        # Otherwise assume decimal degrees.
         return 0
-
     def clean_coordinates(self):
         """
         Convert the single VerbatimLatitude and VerbatimLongitude
