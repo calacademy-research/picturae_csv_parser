@@ -521,6 +521,82 @@ class ImportLlama:
         # Both verbatim values are present, but one or both failed.
         return not (latitude_converted and longitude_converted)
 
+    def get_lat_long_unit(self, row):
+        """
+        Determine the original latitude/longitude format.
+
+        Returns:
+            0 = Decimal degrees
+            1 = Degrees/minutes/seconds (DMS)
+            2 = Degrees/decimal minutes (DM)
+        """
+        lat = ("" if detect_is_empty(row.get("verbatimLatitude")) else str(row.get("verbatimLatitude")).strip())
+
+        lon = ("" if detect_is_empty(row.get("verbatimLongitude")) else str(row.get("verbatimLongitude")).strip())
+
+        coordinate_text = f"{lat} {lon}"
+
+        # Normalize Unicode prime symbols.
+        coordinate_text = (
+            coordinate_text
+            .replace("′", "'")
+            .replace("’", "'")
+            .replace("″", '"')
+            .replace("“", '"')
+            .replace("”", '"')
+        )
+
+        # DMS:
+        dms_patterns = [
+            r"""
+            \d+(?:\.\d+)?       # degrees
+            \s*°?\s*
+            \d+(?:\.\d+)?       # minutes
+            \s*[':]\s*
+            \d+(?:\.\d+)?       # seconds
+            \s*"?
+            """,
+
+            r"""
+            \d+(?:\.\d+)?
+            \s*:\s*
+            \d+(?:\.\d+)?
+            \s*:\s*
+            \d+(?:\.\d+)?
+            """,
+        ]
+
+        if any(
+                re.search(pattern, coordinate_text, flags=re.VERBOSE)
+                for pattern in dms_patterns
+        ):
+            return 1
+
+        # DM:
+        dm_patterns = [
+            r"""
+            \d+(?:\.\d+)?       # degrees
+            \s*°?\s*
+            \d+(?:\.\d+)?       # minutes
+            \s*'
+            """,
+
+            r"""
+            \d+(?:\.\d+)?
+            \s*:\s*
+            \d+(?:\.\d+)?
+            """,
+        ]
+
+        if any(
+                re.search(pattern, coordinate_text, flags=re.VERBOSE)
+                for pattern in dm_patterns
+        ):
+            return 2
+
+        # Otherwise assume decimal degrees.
+        return 0
+
     def clean_coordinates(self):
         """
         Convert the single VerbatimLatitude and VerbatimLongitude
@@ -536,6 +612,12 @@ class ImportLlama:
                 f"{sorted(missing_columns)}"
             )
 
+        self.record_full["lat_long_unit"] = self.record_full.apply(
+            self.get_lat_long_unit,
+            axis=1,
+        )
+
+
         self.record_full["latitude"] = self.record_full["verbatimLatitude"].apply(
             lambda value: self.safe_parse_coordinate(value, coordinate_type="latitude"))
 
@@ -544,7 +626,6 @@ class ImportLlama:
 
         self.record_full["failed_coordinate_conversion"] = self.record_full.apply(
             self.coordinate_conversion_failed, axis=1)
-
 
     def parse_columns(self):
         """combines and extracts information from columns before dropping all but required columns for update."""
@@ -572,10 +653,78 @@ class ImportLlama:
         # dropping uneeded columns
         self.record_full.drop(columns=["status", "source", "text", "elapsed", "verbatimEventDate",
                                        "recordedBy", "recordNumber", "identifiedBy", "dateIdentified",
-                                       "_elevationValues", "elevationEstimated", "ERROR"], inplace=True)
+                                       "_elevationValues", "elevationEstimated", "ERROR", "county"], inplace=True)
+
 
         # renaming columns to updater standard
-        # self.record_full.rename()
+        self.record_full.rename(
+            columns={
+                # Habitat / locality
+                "habitat": "Habitat",
+                "locality": "LocalityName",
+
+                # lat/long Coordinates
+                "latitude": "Latitude1",
+                "longitude": "Longitude1",
+                "verbatimLatitude": "Lat1Text",
+                "verbatimLongitude": "Long1Text",
+                # TRS
+                "trsTownship": "Township",
+                "trsRange": "Range",
+                "trsSection": "Section",
+                "trsQuad": "BaseMeridian",
+                # utm
+                "utmNorthing": "UtmNorthing",
+                "utmEasting": "UtmEasting",
+                "utmZone": "UtmZone",
+                # Elevation
+                "elevation_min": "MinElevation",
+                "elevation_max": "MaxElevation",
+                "elevation_unit": "OriginalElevationUnit",
+                # Datum, if these are the Llama column names
+                "geodeticDatum": "Datum",
+            },
+            inplace=True,
+        )
+
+        self.record_full['LatLongType'] = "Point"
+        self.record_full['LatLongMethod'] = "Specimen coord."
+        self.record_full["UtmDatum"] = ""
+
+        final_columns = [
+            "barcode",
+            "country",
+            "stateProvince",
+            "LocalityName",
+            "Habitat",
+            "associatedTaxa",
+            "occurrenceRemarks",
+            "trs",
+            "Township",
+            "Range",
+            "Section",
+            "BaseMeridian",
+            "utm",
+            "UtmNorthing",
+            "UtmEasting",
+            "UtmZone",
+            "UtmDatum",
+            "Lat1Text",
+            "Long1Text",
+            "Latitude1",
+            "Longitude1",
+            "failed_coordinate_conversion",
+            "lat_long_unit",
+            "LatLongType",
+            "LatLongMethod",
+            "verbatimElevation",
+            "MinElevation",
+            "MaxElevation",
+            "OriginalElevationUnit",
+        ]
+
+        self.record_full = self.record_full[final_columns]
+
 
     def clean_llamaframe(self):
 
