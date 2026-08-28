@@ -204,6 +204,7 @@ def extract_digits(name, num: int):
     match = re.search(pattern, name)
     return int(match.group()) if match else None
 
+
 def to_decimal_degrees(coord: str, num_digits: int):
     """to_decimal_degrees: this function is for the conversion of degrees from
        hours, minutes, seconds format to straight decimal degrees.
