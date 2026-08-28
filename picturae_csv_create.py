@@ -27,6 +27,7 @@ from datetime import datetime
 import geopandas as gpd
 import geodatasets
 from postGIS.post_gis_search import GadmLookup
+from geo_utils import apply_crs_exceptions
 
 
 starting_time_stamp = datetime.now()
@@ -42,9 +43,8 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, covered_ignore, logging_level, verify_region, min_digits=7,):
+    def __init__(self, config, tnrs_ignore, logging_level, verify_region, min_digits=7,):
         self.tnrs_ignore = str_to_bool(tnrs_ignore)
-        self.covered_ignore = str_to_bool(covered_ignore)
         self.verify_region = verify_region
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
@@ -69,7 +69,7 @@ class CsvCreatePicturae:
 
     def init_all_vars(self):
         """init_all_vars:to use for testing and decluttering init function,
-                            initializes all class level variables  """
+                           initializes all class level variables  """
 
         self.cover_list = []
 
@@ -193,7 +193,7 @@ class CsvCreatePicturae:
                     df["IMAGE-FILENAME"] = (
                         df["IMAGE-FILENAME"]
                         .astype(str)
-                        .str.replace(r"\D+", "", regex=True)
+                        .str.replace(r"\.jpg$", "", regex=True)  # only at end
                     )
                     df.rename(columns={"IMAGE-FILENAME": "SPECIMEN-BARCODE"}, inplace=True)
                 if csv_level == "COVER":
@@ -242,8 +242,8 @@ class CsvCreatePicturae:
 
     def fill_duplicate_barcodes(self):
 
-        # 7 or more digits
-        barcode_pat = r"(?<!\d)\d{7,}(?!\d)"
+        # 7-9 digit
+        barcode_pat = r"(?<!\d)\d{7,9}(?!\d)"
 
         # Only treat as "duplicate" if NOTES contains a barcode-like number
         is_duplicate = self.record_full["sheet_notes"].astype(str).str.contains(barcode_pat, regex=True, na=False)
@@ -325,24 +325,44 @@ class CsvCreatePicturae:
                 fold_csv: the folder level csv
                 spec_csv: the specimen level csv
         """
-        matched_csv = pd.merge(spec_csv, manifest_csv, on="SPECIMEN-BARCODE")
+
+        spec_csv = spec_csv.copy()
+        manifest_csv = manifest_csv.copy()
+
+        # Temporary merge keys that remove _1, _2, etc. for matching only
+        spec_csv["_SPECIMEN_BARCODE_MERGE"] = spec_csv["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
+        manifest_csv["_SPECIMEN_BARCODE_MERGE"] = manifest_csv["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
+
+        matched_csv = pd.merge(
+            spec_csv,
+            manifest_csv.drop(columns=["SPECIMEN-BARCODE"], errors="ignore"),
+            on="_SPECIMEN_BARCODE_MERGE",
+            how="inner",
+        )
+
+        matched_csv.drop(columns=["_SPECIMEN_BARCODE_MERGE"], inplace=True)
+
         self.record_full = pd.merge(fold_csv, matched_csv, on="FOLDER-BARCODE")
+
         self.record_full.fillna(np.nan, inplace=True)
-        self.record_full.rename(columns={"NOTES_x": "cover_notes",
-                                         "NOTES_y": "sheet_notes"}, inplace=True)
+        self.record_full.rename(columns={
+            "NOTES_x": "cover_notes",
+            "NOTES_y": "sheet_notes"
+        }, inplace=True)
 
-        # Barcodes present in specimen CSV but not matched in merged CSV
-        spec_difference = set(spec_csv['SPECIMEN-BARCODE']) - set(self.record_full['SPECIMEN-BARCODE'])
+        # Compare using suffix-less barcodes
+        spec_keys = set(spec_csv["_SPECIMEN_BARCODE_MERGE"])
+        matched_keys = set(
+            self.record_full["SPECIMEN-BARCODE"].apply(remove_barcode_suffix)
+        )
 
-        fold_difference = set(self.record_full['FOLDER-BARCODE']) - set(manifest_csv['FOLDER-BARCODE'])
+        spec_difference_keys = spec_keys - matched_keys
 
-        if spec_difference:
+        if spec_difference_keys:
 
-            # Sort numerically where possible
-            spec_difference = sorted(spec_difference, key=lambda x: int(x) if x.isdigit() else float('inf'))
-
-            # Filter rows that correspond to unmatched barcodes
-            filtered = spec_csv[spec_csv['SPECIMEN-BARCODE'].isin(spec_difference)]
+            filtered = spec_csv[
+                spec_csv["_SPECIMEN_BARCODE_MERGE"].isin(spec_difference_keys)
+            ]
 
             # --- Build mapping: CSV-BATCH → List of unmatched barcodes ---
             batch_map = (
@@ -353,12 +373,27 @@ class CsvCreatePicturae:
 
             # Optionally sort the barcode lists
             for k in batch_map:
-                batch_map[k] = sorted(batch_map[k], key=lambda x: int(x) if x.isdigit() else float("inf"))
+                batch_map[k] = sorted(
+                    batch_map[k],
+                    key=lambda x: int(remove_barcode_suffix(str(x)))
+                    if remove_barcode_suffix(str(x)).isdigit()
+                    else float("inf")
+                )
 
             raise ValueError({"unmatched_barcodes": batch_map})
 
+        fold_difference = set(self.record_full["FOLDER-BARCODE"]) - set(manifest_csv["FOLDER-BARCODE"])
+
         if fold_difference:
-            self.logger.warning(f"Following folder barcodes not in specimen csv {fold_difference}")
+            self.logger.warning(
+                f"Following folder barcodes not in specimen csv {fold_difference}"
+            )
+
+        # Cleanup temporary columns
+        spec_csv.drop(columns=["_SPECIMEN_BARCODE_MERGE"], inplace=True, errors="ignore")
+        manifest_csv.drop(columns=["_SPECIMEN_BARCODE_MERGE"], inplace=True, errors="ignore")
+
+
 
     def remove_duplicate_barcodes(self):
         """Removing and saving rows with improperly marked duplicate records for further visual QC"""
@@ -370,7 +405,7 @@ class CsvCreatePicturae:
 
         # where specimen barcode is duplicated, but collector-number is NOT duplicated.
         unmarked_dupes = duplicates[
-            duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'Collector Number'], keep=False) == False]
+            duplicates.duplicated(subset=['SPECIMEN-BARCODE', 'COLLECTOR-NUMBER'], keep=False) == False]
 
         unmarked_all = self.record_full[
             self.record_full['SPECIMEN-BARCODE'].isin(unmarked_dupes['SPECIMEN-BARCODE'])]
@@ -403,7 +438,7 @@ class CsvCreatePicturae:
             'PICTURAE-BATCH-NAME': 'CSV_batch',
             'FOLDER-BARCODE': 'folder_barcode',
             'SPECIMEN-BARCODE': 'CatalogNumber',
-            'ACCESSION - NUMBER - (CAS)(DS)': 'herb_code',
+            'ACCESSION-NUMBER-(CAS)(DS)': 'herb_code',
             'ACCESSION-NUMBER': 'accession_number',
             'PARENT-BARCODE': 'parent_CatalogNumber',
             'TAXON_ID': 'taxon_id',
@@ -462,10 +497,10 @@ class CsvCreatePicturae:
             'HABITAT-+-ASSOCIATED-SPECIES': 'habitat',
             'VERBATIM-DATE': 'verbatim_date',
             'START-DATE-MONTH-(MM)': 'start_date_month',
-            'START-DATE-DAY-(DD)': 'start_date_day',
+            'START-DATE-DAY-(DD)-': 'start_date_day',
             'START-DATE-YEAR-(YYYY)': 'start_date_year',
             'END-DATE-MONTH-(MM)': 'end_date_month',
-            'END-DATE-DAY-(DD)': 'end_date_day',
+            'END-DATE-DAY-(DD)-': 'end_date_day',
             'END-DATE-YEAR-(YYYY)': 'end_date_year',
             'DUPLICATE': 'duplicate',
             'sheet_notes': 'sheet_notes',
@@ -482,11 +517,19 @@ class CsvCreatePicturae:
         #
         self.record_full.rename(columns=col_dict, inplace=True)
 
+        parent_barcode = self.record_full["parent_CatalogNumber"].astype("string").str.strip()
+        catalog_barcode = self.record_full["CatalogNumber"].astype("string").str.strip()
+
+        image_barcode = parent_barcode.where(
+            parent_barcode.notna() & (parent_barcode != ""),
+            catalog_barcode
+        )
+
         # creating image path
         self.record_full["image_path"] = (
             self.record_full["CSV_batch"].astype(str).str.strip()
             + os.sep + "undatabased" + os.sep
-            + self.record_full["CatalogNumber"].astype(str).str.strip()
+            + image_barcode
             + ".tif"
         )
 
@@ -619,26 +662,32 @@ class CsvCreatePicturae:
         missing_label_csv = self.record_full.loc[missing_label]
 
         # flags incorrect start date and end date
-        invalid_start_date = ~self.record_full['start_date'].apply(validate_date)
-        invalid_end_date = ~self.record_full['end_date'].apply(validate_date)
+        for col in ["start_date", "end_date"]:
+            self.record_full[col] = self.record_full[col].apply(correct_date)
 
-        invalid_date_mask = invalid_start_date | invalid_end_date
+        invalid_date_mask = (~self.record_full["start_date"].apply(is_valid_date) |
+                             ~self.record_full["end_date"].apply(is_valid_date))
+
         invalid_date_csv = self.record_full.loc[invalid_date_mask]
 
         # flags verbatim date too long greater than 50 char and stores them in new label_data column
 
-        invalid_verbatim_mask = self.record_full["verbatim_date"].str.len() > 50
+        invalid_verbatim_mask = (self.record_full["verbatim_date"].fillna("").astype(str).str.len() > 50)
 
         # adding lable data and new genus boolean
-        self.record_full['label_data'] = ""
-        self.record_full['new_genus'] = False
+        if "label_data" not in self.record_full.columns:
+            self.record_full["label_data"] = ""
 
-        self.record_full.loc[invalid_verbatim_mask, 'label_data'] = self.record_full.loc[
-            invalid_verbatim_mask, 'verbatim_date']
+        if "new_genus" not in self.record_full.columns:
+            self.record_full["new_genus"] = False
+
+        self.save_long_verbatim_dates(invalid_verbatim_mask)
+
+        self.restore_long_verbatim_to_label_data()
 
         invalid_verbatim_csv = self.record_full.loc[invalid_verbatim_mask]
 
-        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv, \
+        return (missing_rank_csv, missing_family_csv, missing_geography_csv, missing_label_csv, invalid_date_csv,
                 invalid_verbatim_csv)
 
     def backfill_tax_family(self):
@@ -779,31 +828,180 @@ class CsvCreatePicturae:
         message_parts = []
 
         for key, csv_data in data_flag_dict.items():
-            if key == "missing_label" and self.covered_ignore:
+
+            if key == "missing_label":
                 continue
+
             if len(csv_data) == 0:
                 continue
 
             csv_data = csv_data.sort_values(by=["CSV_batch", "CatalogNumber"])
+
             id_col = "folder_barcode" if key in ["missing_rank", "missing_family"] else "CatalogNumber"
 
-            batch_to_items = (
-                csv_data.groupby("CSV_batch")[id_col]
-                .apply(lambda s: sorted(set(s.dropna().astype(str))))
-                .to_dict()
-            )
+            # Special formatting only for invalid verbatim dates
+            if key == "invalid_verbatim":
+
+                batch_to_items = (
+                    csv_data.groupby("CSV_batch")
+                    .apply(
+                        lambda df: [
+                            f"{str(barcode).strip()}: {str(verbatim).strip()}"
+                            for barcode, verbatim in zip(
+                                df["CatalogNumber"],
+                                df["verbatim_date"]
+                            )
+                        ]
+                    )
+                    .to_dict()
+                )
+
+                formatted_batches = "\n".join(
+                    f"  {batch}:\n    " + "\n    ".join(items)
+                    for batch, items in batch_to_items.items()
+                )
+
+            else:
+
+                batch_to_items = (
+                    csv_data.groupby("CSV_batch")[id_col]
+                    .apply(lambda s: sorted(set(s.dropna().astype(str))))
+                    .to_dict()
+                )
+
+                formatted_batches = "\n".join(
+                    f"  {batch}: {items}"
+                    for batch, items in batch_to_items.items()
+                )
 
             flagged_data[key] = batch_to_items
 
-            formatted_batches = "\n".join(
-                f"  {batch}: {items}"
-                for batch, items in batch_to_items.items()
-            )
+            if key == "missing_label":
+                self.logger.warning(
+                    f"{message_dict[key]}\n{formatted_batches}"
+                )
+                continue
 
-            message_parts.append(f"{message_dict[key]}\n{formatted_batches}")
+            message_parts.append(
+                f"{message_dict[key]}\n{formatted_batches}"
+            )
 
         if message_parts:
             raise ValueError("\n\n".join(message_parts))
+
+
+    def save_long_verbatim_dates(self, invalid_verbatim_mask):
+        """
+        Persist the original long verbatim dates before the user fixes
+        them in the source CSVs.
+
+        Existing saved values are preserved so that rerunning after
+        source correction does not lose the original text.
+        """
+        overflow_path = os.path.join(
+            self.dir_path,
+            "verbatim_date_overflow.csv"
+        )
+
+        overflow = self.record_full.loc[
+            invalid_verbatim_mask,
+            ["CSV_batch", "CatalogNumber", "verbatim_date"]
+        ].copy()
+
+        if overflow.empty:
+            return
+
+        overflow.rename(
+            columns={"verbatim_date": "original_verbatim_date"},
+            inplace=True
+        )
+
+        # Normalize keys
+        overflow["CSV_batch"] = overflow["CSV_batch"].astype(str).str.strip()
+        overflow["CatalogNumber"] = overflow["CatalogNumber"].astype(str).str.strip()
+
+        if os.path.isfile(overflow_path):
+            existing = pd.read_csv(
+                overflow_path,
+                dtype=str,
+                keep_default_na=False
+            )
+
+            overflow = pd.concat(
+                [existing, overflow],
+                ignore_index=True
+            )
+
+            # IMPORTANT:
+            # keep="first" means once an original long value has been
+            # captured, a later run cannot overwrite it.
+            overflow.drop_duplicates(
+                subset=["CSV_batch", "CatalogNumber"],
+                keep="first",
+                inplace=True
+            )
+
+        overflow.to_csv(
+            overflow_path,
+            index=False
+        )
+
+
+    def restore_long_verbatim_to_label_data(self):
+        """
+        Populate label_data from verbatim_date_overflow.csv.
+
+        This allows the original long verbatim date to survive after
+        verbatim_date has been manually corrected in the source CSV.
+        """
+        overflow_path = os.path.join(
+            self.dir_path,
+            "verbatim_date_overflow.csv"
+        )
+
+        if "label_data" not in self.record_full.columns:
+            self.record_full["label_data"] = ""
+
+        if not os.path.isfile(overflow_path):
+            return
+
+        overflow = pd.read_csv(
+            overflow_path,
+            dtype=str,
+            keep_default_na=False
+        )
+
+        overflow["CSV_batch"] = overflow["CSV_batch"].astype(str).str.strip()
+        overflow["CatalogNumber"] = overflow["CatalogNumber"].astype(str).str.strip()
+
+        lookup = (
+            overflow
+            .drop_duplicates(
+                subset=["CSV_batch", "CatalogNumber"],
+                keep="first"
+            )
+            .set_index(["CSV_batch", "CatalogNumber"])
+            ["original_verbatim_date"]
+            .to_dict()
+        )
+
+        def get_original(row):
+            key = (
+                str(row["CSV_batch"]).strip(),
+                str(row["CatalogNumber"]).strip()
+            )
+
+            return lookup.get(key, "")
+
+        saved_values = self.record_full.apply(
+            get_original,
+            axis=1
+        )
+
+        # Only populate rows that have a saved overflow value.
+        mask = saved_values.astype(str).str.strip().ne("")
+
+        self.record_full.loc[mask, "label_data"] = saved_values.loc[mask]
 
 
     def safe_parse_coord(
@@ -1117,8 +1315,8 @@ class CsvCreatePicturae:
                 dbname="gis",
                 user="postgres",
                 password="postgres",
-                port=5432,
-                adm1_table="public.gadm",  # verify with \dt
+                port=pic_config.GADM_PORT,
+                adm1_table="public.gadm",
             )
 
             for idx, row in self.record_full.loc[valid_mask].iterrows():
@@ -1327,6 +1525,10 @@ class CsvCreatePicturae:
         # self clean lat long:
         self.process_lat_long_frame()
 
+        # detect alt utm crs
+
+        self.record_full = apply_crs_exceptions(self.record_full)
+
         # reverse geocode coords against GADM and flag admin mismatches
         self.add_gadm_coord_checks()
 
@@ -1352,6 +1554,8 @@ class CsvCreatePicturae:
 
         self.record_full[tax_cols] = self.record_full[tax_cols].map(
             lambda x: x.strip() if isinstance(x, str) else x)
+
+        self.move_indet_species_to_sheet_notes()
 
         # filling in missing subtaxa ranks for first infraspecific rank
         self.record_full['missing_rank'] = (pd.isna(self.record_full[f'Rank 1']) & pd.notna(
@@ -1427,10 +1631,53 @@ class CsvCreatePicturae:
     def check_if_images_present(self):
         """checks that each image exists, creating boolean column for later use"""
 
-        self.record_full['image_valid'] = self.record_full.apply(
-            lambda row: os.path.exists(f"{row['image_path']}")
-                        or str_to_bool(row['duplicate']) is True,
-            axis=1)
+        paths = self.record_full["image_path"].fillna("").astype(str)
+
+        dir_to_files = {}
+
+        for directory in paths.map(os.path.dirname).drop_duplicates():
+            if not directory:
+                continue
+
+            try:
+                dir_to_files[directory] = set(os.listdir(directory))
+            except FileNotFoundError:
+                dir_to_files[directory] = set()
+
+        basenames = paths.map(os.path.basename)
+        directories = paths.map(os.path.dirname)
+
+        exists_mask = [
+            filename in dir_to_files.get(directory, set())
+            for directory, filename in zip(directories, basenames)
+        ]
+
+        duplicate_mask = self.record_full["duplicate"].apply(str_to_bool)
+
+        self.record_full["image_valid"] = pd.Series(exists_mask, index=self.record_full.index) | duplicate_mask
+
+
+    def move_indet_species_to_sheet_notes(self):
+        """
+        If Species is indet. or undet., copy that value into sheet_notes
+        and clear species, so it does not get used in taxon parsing.
+        """
+
+        species_clean = self.record_full["Species"].astype(str).str.strip()
+        mask = species_clean.str.lower().isin(["indet.", "undet."])
+
+        if not mask.any():
+            return
+
+        existing_notes = self.record_full.loc[mask, "sheet_notes"].fillna("").astype(str).str.strip()
+
+        self.record_full.loc[mask, "sheet_notes"] = np.where(
+            existing_notes == "",
+            species_clean.loc[mask],
+            existing_notes + " " + species_clean.loc[mask]
+        )
+
+        self.record_full.loc[mask, "Species"] = ""
 
     def taxon_process_row(self, row):
         """applies taxon_get to a row of the picturae python dataframe"""
@@ -1604,16 +1851,24 @@ class CsvCreatePicturae:
         taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
                                             (pd.notna(self.record_full['overall_score'])) &
                                             (self.record_full['overall_score'] != 0)]
+        taxon_correct_table = []
 
         try:
             taxon_correct_table = taxon_to_correct[['CSV_batch', 'fullname',
                                                     'name_matched', 'overall_score']].drop_duplicates()
 
+            taxon_correct_table = taxon_correct_table.sort_values(
+                by=['CSV_batch', 'CatalogNumber']
+            )
+
             assert len(taxon_correct_table) <= 0
 
         except:
-            raise IncorrectTaxonError(f'TNRS has rejected taxonomic names at '
-                                      f'the following batches: {taxon_correct_table}')
+            raise IncorrectTaxonError(
+                f'TNRS has rejected taxonomic names at '
+                f'the following batches:\n{taxon_correct_table.to_string(index=False)}'
+            )
+
 
     def read_and_merge_image_manifest(self):
         """to keep taxonomic family consistent with herbarium cabinet order,
@@ -1721,10 +1976,6 @@ if __name__ == "__main__":
                                                                               "ignore TNRS' matched name "
                                                                               "for taxa that score < .99")
 
-    parser.add_argument("-ci", "--covered_ignore", nargs="?",
-                        required=False, help="True or False choice to ignore warnings for covered/folded specimens",
-                        default=False)
-
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: %(default)s)")
@@ -1742,5 +1993,4 @@ if __name__ == "__main__":
     pic_config = get_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
-                                              tnrs_ignore=args.tnrs_ignore, covered_ignore=args.covered_ignore,
-                                              verify_region=args.verify_region)
+                                              tnrs_ignore=args.tnrs_ignore, verify_region=args.verify_region)

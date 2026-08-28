@@ -4,7 +4,7 @@ from collections import defaultdict
 import os
 from get_configs import get_config
 from sql_csv_utils import SqlCsvTools
-from string_utils import remove_non_numerics
+from string_utils import remove_non_numerics, detect_is_empty
 import numpy as np
 import csv
 import logging
@@ -13,14 +13,15 @@ import json
 import requests
 import argparse
 import math
+import re
 from label_reconciliations.core import run_on_dataframe
 from coordinate_parser.parser import parse_coordinate
 
 
 # https://pypi.org/project/coordinate-parser/
 
-class NfnCsvCreate():
-    def __init__(self, coll, input_file, logging_level, hemisphere):
+class NfnCsvCreate:
+    def __init__(self, coll, input_file,  model,  logging_level, hemisphere):
 
         self.logger = logging.getLogger("NfnCreatePicturae")
         self.logger.setLevel(logging_level)
@@ -43,6 +44,8 @@ class NfnCsvCreate():
         self.ollama_url = self.config.OLLAMA_URL
 
         self.hemisphere = hemisphere
+
+        self.model = model
 
         self.nominatum_dict = {}
 
@@ -102,20 +105,6 @@ class NfnCsvCreate():
         d = json.loads(cell)
         inner = next(iter(d.values()))
         return inner.get(value, None)
-
-    def detect_is_empty(self, string) -> bool:
-        """method to detect if a string type variable contains none or none-like value.
-           Returns True and False
-        """
-        if string is None:
-            return True
-        try:
-            if isinstance(string, float) and math.isnan(string):
-                return True
-        except Exception:
-            pass
-        s = str(string).strip().lower()
-        return s in ("", "nan", "none", "null", 'unknown', 'unkown')
 
     def unpack_json(self):
         """function used to unpack json blobs in standard nfn classification ouput"""
@@ -216,7 +205,7 @@ class NfnCsvCreate():
         elif min_elevation == max_elevation:
             max_elevation = ''
 
-        is_unknown = self.detect_is_empty(elevation_unit)
+        is_unknown = detect_is_empty(elevation_unit)
 
         if not str(min_elevation).endswith("0") and is_unknown:
             min_elevation = ''
@@ -229,7 +218,7 @@ class NfnCsvCreate():
                 elevation_unit = 'm'
 
         # emptying out single digit entries
-        if ((len(min_elevation) <= 1 and not self.detect_is_empty(min_elevation))
+        if ((len(min_elevation) <= 1 and not detect_is_empty(min_elevation))
                 or len(min_elevation) > 5):
             min_elevation = ''
             max_elevation = ''
@@ -255,14 +244,14 @@ class NfnCsvCreate():
             and standardizes empty entries into [No Accession].
         """
         acc_num = str(acc_num).strip()
-        if acc_num == "[No Accession]" or self.detect_is_empty(acc_num) or acc_num == "":
+        if acc_num == "[No Accession]" or detect_is_empty(acc_num) or acc_num == "":
             acc_num = "[No Accession]"
         elif (len(remove_non_numerics(acc_num)) < len(acc_num)) or (len(remove_non_numerics(acc_num)) > 10):
             acc_num = ""
         return acc_num
 
     def regex_check_coord(self, coord: str, regex_pattern, max_num: int):
-        if coord and not self.detect_is_empty(coord):
+        if coord and not detect_is_empty(coord):
             # If regex pattern is found anywhere within the coord
             match = regex_pattern.search(coord)
             if match:
@@ -321,7 +310,7 @@ class NfnCsvCreate():
                 "Datum": str(row_dict.get(f"Utm_datum_{i}", "")),
             }
 
-            all_blank = all(self.detect_is_empty(v) for v in payload.values())
+            all_blank = all(detect_is_empty(v) for v in payload.values())
 
             # Run LLM if appropriate; otherwise keep as-is
             if do_llm and not all_blank:
@@ -344,8 +333,8 @@ class NfnCsvCreate():
             utm_northing_r = resp.get("Utm_northing", "")
             datum_r = resp.get("Datum", "")
 
-            trs_blank = all(self.detect_is_empty(x) for x in (township, range_, section))
-            utm_blank = all(self.detect_is_empty(x) for x in (utm_zone_r, utm_easting_r, utm_northing_r))
+            trs_blank = all(detect_is_empty(x) for x in (township, range_, section))
+            utm_blank = all(detect_is_empty(x) for x in (utm_zone_r, utm_easting_r, utm_northing_r))
 
             if trs_blank:
                 quadrangle = ""
@@ -399,15 +388,16 @@ class NfnCsvCreate():
         self.master_csv['cleaned_spec_desc'] = cleaned_specimen_desc
 
     def send_to_llm(self, user_input, system_prompt):
-        """building block function which posts the llm api request, assumes default llama3:70b"""
+        """building block function which posts the llm api request"""
         url = f"{self.ollama_url}/api/chat"
+
         try:
             self.logger.info(f"Sending request to: {url}")
             response = requests.post(
                 url,
                 headers={"Content-Type": "application/json"},
                 data=json.dumps({
-                    "model": "llama3:70b",
+                    "model": f"{self.model}",
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_input}
@@ -430,25 +420,45 @@ class NfnCsvCreate():
             return "Error"
 
     def clean_and_parse_json5(self, raw_text):
-        """parses json output of LLM functions"""
+        """Extract and parse a JSON/JSON5 object returned by the LLM."""
+
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            self.logger.error("LLM returned an empty response")
+            return "Error"
+
         try:
-            # Remove markdown formatting (e.g., ```json)
-            cleaned = raw_text.strip().lstrip("`").rstrip("`")
-            # Find the first open brace
+            cleaned = raw_text.strip()
+
+            cleaned = re.sub(
+                r"^\s*```(?:json5?|javascript)?\s*",
+                "",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+
+            # Extract only the JSON object, excluding text or backticks after it.
             start = cleaned.find("{")
+            end = cleaned.rfind("}")
+
             if start == -1:
                 raise ValueError("No opening brace found")
-            # Manually extract everything from the first brace
-            json_candidate = cleaned[start:]
-            # If there's no closing brace, add one
-            if not json_candidate.strip().endswith("}"):
-                json_candidate += "}"
-            # Try parsing
+
+            if end == -1 or end < start:
+                raise ValueError("No closing brace found")
+
+            json_candidate = cleaned[start:end + 1]
+
             return json5.loads(json_candidate)
+
         except Exception as e:
-            self.logger.error(f"Could not clean/parse JSON5 from text: {raw_text}")
-            self.logger.error(f"Parsing error detail: {e}")
+            self.logger.error(
+                "Could not clean/parse JSON5 from text: %r",
+                raw_text,
+            )
+            self.logger.error("Parsing error detail: %s", e)
             return "Error"
+
 
     def has_matching_substring(self, row, column1, column2):
         fullname_parts = str(row[column1]).split()  # Split fullname into parts
@@ -513,11 +523,11 @@ class NfnCsvCreate():
 
         for i in range(1, matches + 1):
             for col in (f"lat_verbatim_{i}", f"long_verbatim_{i}"):
-                if col in row.index and not self.detect_is_empty(row[col]):
+                if col in row.index and not detect_is_empty(row[col]):
                     verb_count += 1
 
             for col in (f"lat_numeric_{i}", f"long_numeric_{i}"):
-                if col in row.index and not self.detect_is_empty(row[col]):
+                if col in row.index and not detect_is_empty(row[col]):
                     num_count += 1
 
         if verb_count == 0:
@@ -763,7 +773,7 @@ class NfnCsvCreate():
 
         for col in ("Township_2", "Utm_northing_2", "lat_verbatim_2"):
             val = get_val(col)
-            if not self.detect_is_empty(val):
+            if not detect_is_empty(val):
                 return True
         return False
 
@@ -785,6 +795,7 @@ class NfnCsvCreate():
         return unrec_df, rec_df
 
     def run_all_methods(self):
+        """master function which runs each cleaning step"""
         self.rename_columns()
         self.remove_records()
         for index, row in self.master_csv.iterrows():
@@ -803,7 +814,7 @@ class NfnCsvCreate():
 
         self.summary_path = f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_summary.html"
 
-        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1', ""])
+        self.master_csv.drop(columns=['classification_id', 'Remarks', 'Text1'], inplace=True, errors="ignore")
 
         # normalizing column names to match db fields for update
 
@@ -820,7 +831,7 @@ class NfnCsvCreate():
                                         "Township_1": "Township", "Range_1": "RangeDesc",
                                         "Section_1": "Section",
                                         "Quadrangle_1": "BaseMeridian"
-                                        })
+                                        }, inplace=True)
 
         self.master_csv.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_unreconciled.csv",
@@ -869,6 +880,8 @@ if __name__ == "__main__":
                         default="NorthWest", choices=['NorthWest', 'NorthEast', 'SouthWest', 'SouthEast'],
                         help="the hemisphere quadrant the dataset is covering, to standardize +, - numeric lat/longs"
                         )
+    parser.add_argument('-m', '--model', nargs="?", default=None,
+                        help="name of model to instruct ollama to use")
 
     args = parser.parse_args()
 
@@ -876,6 +889,5 @@ if __name__ == "__main__":
 
     picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file=args.input_file,
                                          logging_level=args.log_level,
-                                         hemisphere=args.hemisphere)
+                                         hemisphere=args.hemisphere, model=args.model)
     picturae_csv_instance.run_all_methods()
-
