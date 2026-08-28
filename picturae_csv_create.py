@@ -1854,8 +1854,8 @@ class CsvCreatePicturae:
         taxon_correct_table = []
 
         try:
-            taxon_correct_table = taxon_to_correct[['CSV_batch', 'fullname',
-                                                    'name_matched', 'overall_score']].drop_duplicates()
+            taxon_correct_table = (taxon_to_correct[['CSV_batch', 'fullname', 'name_matched', 'overall_score']]
+                                   .drop_duplicates().sort_values(by=['CSV_batch', 'fullname']).reset_index(drop=True))
 
             taxon_correct_table = taxon_correct_table.sort_values(
                 by=['CSV_batch', 'CatalogNumber']
