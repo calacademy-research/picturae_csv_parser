@@ -1,7 +1,5 @@
 import logging
-import sys
 import traceback
-import re
 import time
 from mysql.connector import errorcode
 import mysql.connector
@@ -95,17 +93,19 @@ class DbUtils:
             self.logger.error(f"Unknown exception during connection: {err}")
             raise
 
-
-    # added buffered = true so will work properly with forloops
     @retry_with_backoff()
-    def get_one_record(self, sql):
+    def get_one_record(self, sql, params=None):
         """Fetch a single record from the database with retries."""
         cursor = self.get_cursor(buffered=True)
         try:
             if cursor is None:
                 raise mysql.connector.Error("Failed to acquire a database cursor")
 
-            cursor.execute(sql)
+            if params is None:
+                cursor.execute(sql)  # No parameters
+            else:
+                cursor.execute(sql, tuple(params))
+
             retval = cursor.fetchone()
             cursor.close()
             if retval is None:
@@ -125,13 +125,16 @@ class DbUtils:
         return retval
 
     @retry_with_backoff()
-    def get_records(self, sql):
+    def get_records(self, sql, params=None):
         """gets multiple records at once"""
         cursor = self.get_cursor(buffered=True)
         try:
             if cursor is None:
                 raise mysql.connector.Error("Failed to acquire a database cursor")
-            cursor.execute(sql)
+            if params:
+                cursor.execute(sql, tuple(params))
+            else:
+                cursor.execute(sql)
             record_list = list(cursor.fetchall())
             self.logger.debug(f"get records SQL: {sql}")
             cursor.close()
@@ -164,7 +167,8 @@ class DbUtils:
     def get_cursor(self, buffered=False):
         """Gets a database cursor, ensuring connection is available."""
         try:
-            if self.cnx is None or not self.cnx.is_connected():
+            # or not self.cnx.is_connected()
+            if self.cnx is None:
                 self.connect()
             return self.cnx.cursor(buffered=buffered)
         except mysql.connector.OperationalError:
@@ -174,7 +178,7 @@ class DbUtils:
 
 
     @retry_with_backoff()
-    def execute(self, sql):
+    def execute(self, sql, params=None):
         """Executes a SQL statement with logging and connection management."""
 
         self.logger.debug(f"SQL: {sql}")
@@ -184,7 +188,11 @@ class DbUtils:
                 self.connect()
 
             cursor = self.cnx.cursor(buffered=True)  # Use buffered cursor
-            cursor.execute(sql)
+            if params:
+                cursor.execute(sql, params=tuple(params))
+            else:
+                cursor.execute(sql)
+
             self.cnx.commit()
             cursor.close()
             return True

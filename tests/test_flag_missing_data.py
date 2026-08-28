@@ -24,7 +24,7 @@ class TestDataFlagging(unittest.TestCase, TestingTools):
             'Country': ['USA', None, '', None, 'Brazil'],
             'sheet_notes': ['covered', '', 'folded', '', 'Duplicate[Null]'],
             'start_date': ['2022-01-01', '2023-02-29', '1918-04-31', '2024-02-29', '2022-06-15'],
-            'end_date': ['2022-12-31', '2023-12-31', '2023-01-01', '1920-05-40', '2023-06-30'],
+            'end_date': ['2022-12-31', '2023-12-31', '2023-01-01', '2023-06-30', '1920-05-40'],
             'CatalogNumber': ['1', '2', '3', '4', '5'],
             'verbatim_date': ['April 5 1920', 'March 20th 1980', "10/05/67", 'March 1, March 2 , March 5 ,'
                                                                              'March 20, 1980, 1999, 1920, 1967,'

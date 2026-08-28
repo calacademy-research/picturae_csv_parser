@@ -9,6 +9,7 @@ import pandas as pd
 import hmac
 import settings
 import os
+import re
 from dateutil.parser import parse
 
 # import list tools
@@ -107,23 +108,34 @@ def validate_date(date_string):
         return True
 
 
+
+
 def format_date_columns(year, month, day):
-    """format_date_columns: gathers year, month, day columns
-       and concatenates them into one YYYY-MM-DD date.
+    """Build a date-like string from year/month/day.
+
+    Rules:
+    - bad / missing month or day -> default to 01
     """
-    if not pd.isna(year) and year != "":
-        date_str = f"{int(year):04d}"
-        if not pd.isna(month) and month != "":
-            date_str += f"-{int(month):02d}"
-            if not pd.isna(day) and day != "":
-                date_str += f"-{int(day):02d}"
-            else:
-                date_str += f"-01"
-        else:
-            date_str += f"-01-01"
-        return date_str
-    else:
+    if pd.isna(year) or str(year).strip() == "":
         return ""
+
+    year_str = str(year).strip()
+    year_valid = year_str.isdigit() and len(year_str) == 4
+
+    month_str_raw = "" if pd.isna(month) else str(month).strip()
+    day_str_raw = "" if pd.isna(day) else str(day).strip()
+
+    month_missing = month_str_raw == ""
+    day_missing = day_str_raw == ""
+
+    if not year_valid and month_missing and day_missing:
+        return ""
+
+    year_str = year_str if year_valid else "9999"
+    month_str = f"{int(month_str_raw):02d}" if month_str_raw.isdigit() else "01"
+    day_str = f"{int(day_str_raw):02d}" if day_str_raw.isdigit() else "01"
+
+    return f"{year_str}-{month_str}-{day_str}"
 
 
 def fill_empty_col(dataframe, string_fill, col_name):

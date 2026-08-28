@@ -1,0 +1,5 @@
+1. download gadm data layers from https://gadm.org/data.html, then select data for entire world, or subset which you want to QC
+
+2. unzip the folder
+
+3. run setup_gadm_postgis.sh to create postgis container.
