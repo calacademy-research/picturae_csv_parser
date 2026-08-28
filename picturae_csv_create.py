@@ -1606,8 +1606,8 @@ class CsvCreatePicturae:
                                             (self.record_full['overall_score'] != 0)]
 
         try:
-            taxon_correct_table = taxon_to_correct[['CSV_batch', 'fullname',
-                                                    'name_matched', 'overall_score']].drop_duplicates()
+            taxon_correct_table = (taxon_to_correct[['CSV_batch', 'fullname', 'name_matched', 'overall_score']]
+                                   .drop_duplicates().sort_values(by=['CSV_batch', 'fullname']).reset_index(drop=True))
 
             assert len(taxon_correct_table) <= 0
 
