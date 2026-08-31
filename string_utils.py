@@ -204,6 +204,7 @@ def extract_digits(name, num: int):
     match = re.search(pattern, name)
     return int(match.group()) if match else None
 
+
 def to_decimal_degrees(coord: str, num_digits: int):
     """to_decimal_degrees: this function is for the conversion of degrees from
        hours, minutes, seconds format to straight decimal degrees.
@@ -223,3 +224,20 @@ def to_decimal_degrees(coord: str, num_digits: int):
 def zero_out_barcode(number):
     """changes barcode to specify barcode with leading zeroes, function made for lapply"""
     return str(number).zfill(9)
+
+
+def detect_is_empty(value) -> bool:
+    """
+    Detect empty or none-like values.
+    """
+    if value is None:
+        return True
+
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+
+    return str(value).strip().lower() in {"", "nan", "none", "null", "unknown",
+                                          "unkown", "empty", "<na>", '""', "''"}

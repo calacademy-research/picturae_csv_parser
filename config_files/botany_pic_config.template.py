@@ -39,6 +39,8 @@ NFN_CSV_FOLDER = "nfn_csv"
 
 OLLAMA_URL = "http://10.1.1.1.1:11111"
 
+GADM_PORT = 5432
+
 # placeholder bounding elevation (6190 highest in North America)
 ELEV_UPPER_BOUND = 6190
 

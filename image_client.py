@@ -303,7 +303,6 @@ class ImageClient:
             'search_type': search_type,
             'token': self.generate_token(quote(filename))
         }
-        print(params)
 
         return self.decode_response(params)
 
