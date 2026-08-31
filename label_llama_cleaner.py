@@ -8,8 +8,8 @@ import re
 import numpy as np
 import pandas as pd
 from coordinate_parser.parser import parse_coordinate
-from string_utils import remove_non_numerics, detect_is_empty
-from BOT_database_updater import UpdateBotDbFields
+from string_utils import detect_is_empty
+from difflib import SequenceMatcher
 
 class ImportLlama:
     def __init__(self, csv_path: str, hemisphere: str = "NorthWest"):
@@ -645,18 +645,12 @@ class ImportLlama:
         )
 
         # concatenating associated species to habitat.
-        self.record_full["habitat"] = (
-            self.record_full[["habitat", "associatedTaxa"]]
-            .fillna("")
-            .astype(str)
-            .apply(
-                lambda row: ". ".join(
-                    value.strip()
-                    for value in row
-                    if value.strip()
-                ),
-                axis=1,
-            )
+        self.record_full["habitat"] = self.record_full.apply(
+            lambda row: self.combine_habitat_and_taxa(
+                row["habitat"],
+                row["associatedTaxa"]
+            ),
+            axis=1,
         )
 
         # dropping uneeded columns
@@ -734,6 +728,50 @@ class ImportLlama:
 
         self.record_full = self.record_full[final_columns]
 
+
+    def combine_habitat_and_taxa(self, habitat, associated_taxa):
+        """combines associated taxa into the habitat field, watching out for duplicated phrases."""
+        habitat = "" if detect_is_empty(habitat) else str(habitat).strip()
+        associated_taxa = "" if detect_is_empty(associated_taxa) else str(associated_taxa).strip()
+
+        if not habitat:
+            return associated_taxa
+
+        if not associated_taxa:
+            return habitat
+
+        def normalize(text):
+            text = text.lower()
+            text = re.sub(r"\s+", " ", text)
+            text = re.sub(r"[.,;:\s]+$", "", text)
+            return text.strip()
+
+        habitat_norm = normalize(habitat)
+        taxa_norm = normalize(associated_taxa)
+
+        # Exact duplicate after normalization
+        if habitat_norm == taxa_norm:
+            return habitat
+
+        # One value is already contained in the other
+        if taxa_norm in habitat_norm:
+            return habitat
+
+        if habitat_norm in taxa_norm:
+            return associated_taxa
+
+        # Catch very close duplicates caused by minor OCR/punctuation differences
+        similarity = SequenceMatcher(
+            None,
+            habitat_norm,
+            taxa_norm
+        ).ratio()
+
+        if similarity >= 0.90:
+            # Keep the longer/more informative version
+            return max((habitat, associated_taxa), key=len)
+
+        return f"{habitat.rstrip('.')}." + f" {associated_taxa.lstrip()}"
 
     def clean_llamaframe(self):
 
