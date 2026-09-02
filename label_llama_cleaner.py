@@ -621,10 +621,12 @@ class ImportLlama:
                 f"{sorted(missing_columns)}"
             )
 
-        self.record_full["lat_long_unit"] = self.record_full.apply(
+        self.record_full["OriginalLatLongUnit"] = self.record_full.apply(
             self.get_lat_long_unit,
             axis=1,
         )
+
+        self.record_full["SrcLatLongUnit"] = self.record_full["OriginalLatLongUnit"]
 
 
         self.record_full["latitude"] = self.record_full["verbatimLatitude"].apply(
@@ -690,8 +692,8 @@ class ImportLlama:
             inplace=True,
         )
 
-        self.record_full['LatLongType'] = "Point"
         self.record_full['LatLongMethod'] = "Specimen coord."
+        self.record_full['Datum'] = ""
         self.record_full["UtmDatum"] = ""
 
         final_columns = [
@@ -717,9 +719,10 @@ class ImportLlama:
             "Latitude1",
             "Longitude1",
             "failed_coordinate_conversion",
-            "lat_long_unit",
-            "LatLongType",
+            "OriginalLatLongUnit",
+            "SrcLatLongUnit",
             "LatLongMethod",
+            "Datum",
             "verbatimElevation",
             "MinElevation",
             "MaxElevation",
