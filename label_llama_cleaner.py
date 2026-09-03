@@ -4,12 +4,11 @@ import math
 import os
 import logging
 import re
-
-import numpy as np
 import pandas as pd
 from coordinate_parser.parser import parse_coordinate
 from string_utils import detect_is_empty
 from difflib import SequenceMatcher
+from gen_import_utils import clean_numeric_column, clean_utm_zone
 
 class ImportLlama:
     def __init__(self, csv_path: str, hemisphere: str = "NorthWest"):
@@ -23,6 +22,7 @@ class ImportLlama:
         )
 
         self.clean_llamaframe()
+
 
     def remove_artifacts(self):
         """
@@ -85,7 +85,70 @@ class ImportLlama:
             string_columns
         ].apply(lambda column: column.map(clean_value))
 
+        for column in ["utmNorthing", "utmEasting"]:
+            self.record_full[column] = self.record_full[column].apply(clean_numeric_column)
 
+        self.record_full["utmZone"] = self.record_full["utmZone"].apply(clean_utm_zone)
+
+    def remove_echoed_column_names(self, threshold=0.90):
+        """Clear cells that fuzzily match their own column name."""
+
+        def normalize(value):
+            if pd.isna(value):
+                return ""
+
+            return re.sub(
+                r"[^a-z0-9]",
+                "",
+                str(value).casefold(),
+            )
+
+        # Avoid altering metadata required later in the pipeline.
+        excluded_columns = {
+            "source",
+            "status",
+            "text",
+            "elapsed",
+        }
+
+        for column in self.record_full.columns:
+            if column in excluded_columns:
+                continue
+
+            normalized_column = normalize(column)
+
+            def matches_column_name(value):
+                normalized_value = normalize(value)
+
+                if not normalized_value:
+                    return False
+
+                # Always remove an exact normalized match.
+                if normalized_value == normalized_column:
+                    return True
+
+                # Avoid fuzzy matching very short names such as trs or utm.
+                if len(normalized_column) < 5:
+                    return False
+
+                similarity = SequenceMatcher(
+                    None,
+                    normalized_value,
+                    normalized_column,
+                ).ratio()
+
+                return similarity >= threshold
+
+            mask = self.record_full[column].map(matches_column_name)
+
+            if mask.any():
+                logging.debug(
+                    "Removed echoed column name from column %s in %d row(s)",
+                    column,
+                    mask.sum(),
+                )
+
+                self.record_full.loc[mask, column] = pd.NA
 
 
     def parse_list_value(self, value):
@@ -778,8 +841,9 @@ class ImportLlama:
 
     def clean_llamaframe(self):
 
-        # remove bracketed llm artifacts.
+        # remove llm artifacts.
         self.remove_artifacts()
+        self.remove_echoed_column_names(threshold=0.90)
 
 
         # Split elevation values.

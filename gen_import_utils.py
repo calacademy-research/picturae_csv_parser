@@ -160,6 +160,7 @@ def is_valid_date(date_string):
         logging.error(f"{e}: {date_string}")
         return False
 
+
 def format_date_columns(year, month, day):
     """Build a date-like string from year/month/day.
 
@@ -194,7 +195,41 @@ def fill_empty_col(dataframe, string_fill, col_name):
 
     dataframe[col_name] = dataframe[col_name].replace(['', None, 'nan', np.nan], string_fill)
 
-    return  dataframe
+    return dataframe
+
+
+def clean_numeric_column(value):
+    """enforces column values as integer or float"""
+    if pd.isna(value):
+        return pd.NA
+
+    normalized = str(value).strip().replace(",", ".")
+    numeric = pd.to_numeric(normalized, errors="coerce")
+
+    if pd.isna(numeric) or not np.isfinite(numeric):
+        return pd.NA
+
+    return normalized
+
+
+def clean_utm_zone(value):
+    """removes non-numerics + enforces range of values to 1-60 for real utm zones"""
+    if pd.isna(value):
+        return pd.NA
+
+    normalized = str(value).strip()
+    numeric = pd.to_numeric(normalized, errors="coerce")
+
+    if (
+            pd.isna(numeric)
+            or not np.isfinite(numeric)
+            or not float(numeric).is_integer()
+    ):
+        return pd.NA
+
+    if not 1 <= int(numeric) <= 60:
+        return pd.NA
+    return str(int(numeric))
 
 
 def unique_ordered_list(input_list):
