@@ -232,6 +232,23 @@ def clean_utm_zone(value):
     return str(int(numeric))
 
 
+
+def correct_swapped_utm(utm_northing, utm_easting):
+    """detects swapped northing and easting values for utm"""
+    northing = pd.to_numeric(utm_northing, errors="coerce")
+    easting = pd.to_numeric(utm_easting, errors="coerce")
+
+    if (
+        pd.notna(northing)
+        and pd.notna(easting)
+        and 100_000 <= northing <= 900_000
+        and 900_000 < easting <= 10_000_000
+    ):
+        northing, easting = easting, northing
+
+    return northing, easting
+
+
 def unique_ordered_list(input_list):
     """unique_ordered_list:
             takes a list and selects only unique elements,

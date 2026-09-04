@@ -8,7 +8,7 @@ import pandas as pd
 from coordinate_parser.parser import parse_coordinate
 from string_utils import detect_is_empty
 from difflib import SequenceMatcher
-from gen_import_utils import clean_numeric_column, clean_utm_zone
+from gen_import_utils import clean_numeric_column, clean_utm_zone, correct_swapped_utm
 
 class ImportLlama:
     def __init__(self, csv_path: str, hemisphere: str = "NorthWest"):
@@ -701,6 +701,7 @@ class ImportLlama:
         self.record_full["failed_coordinate_conversion"] = self.record_full.apply(
             self.coordinate_conversion_failed, axis=1)
 
+
     def parse_columns(self):
         """combines and extracts information from columns before dropping all but required columns for update."""
 
@@ -851,10 +852,17 @@ class ImportLlama:
                         lambda row: self.parse_elevation_data(row["_elevationValues"], row["elevationUnits"],
                                                               row["verbatimElevation"]), axis=1)
 
+
         #standardize empty cells:
         self.record_full = self.record_full.replace(r"(?i)^\s*(nan|none|null|unknown|unkown|empty|<na>|\(empty\)|"
                                                     r"\(empty string\))\s*$",
                                                     pd.NA, regex=True)
+
+
+        # Correct swapped UTM northing/easting values.
+        self.record_full[["utmNorthing", "utmEasting"]] = (self.record_full.apply(lambda row: correct_swapped_utm(
+                                                            row["utmNorthing"], row["utmEasting"]),
+                                                            axis=1, result_type="expand"))
 
         # Convert the single latitude/longitude pair.
         self.clean_coordinates()
@@ -869,7 +877,7 @@ class ImportLlama:
 
         self.parse_columns()
 
-        self.record_full.to_csv(output_path, index=False)
+        self.record_full.to_csv(output_path, index=False, sep=",")
 
         logging.info(f"Cleaned CSV written to: {output_path}")
 
