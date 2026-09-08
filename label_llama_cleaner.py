@@ -739,7 +739,7 @@ class ImportLlama:
                 "verbatimLongitude": "Long1Text",
                 # TRS
                 "trsTownship": "Township",
-                "trsRange": "Range",
+                "trsRange": "RangeDesc",
                 "trsSection": "Section",
                 "trsQuad": "BaseMeridian",
                 # utm
@@ -770,7 +770,7 @@ class ImportLlama:
             "occurrenceRemarks",
             "trs",
             "Township",
-            "Range",
+            "RangeDesc",
             "Section",
             "BaseMeridian",
             "utm",
