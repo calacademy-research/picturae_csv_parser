@@ -25,7 +25,7 @@ CSV_FOLD = f"{sla}folder_csv_prefix"
 # batch assembler terms
 RESIZED_PREFIX = f'{sla}path{sla}to{sla}resized_images{sla}'
 
-DIGILEAP_DESTINATION = f'{sla}path{sla}to{sla}digileap_folder"'
+ASSEMBLER_DESTINATION = f'{sla}path{sla}to{sla}digileap_folder"'
 
 # title substrings to seperate from agent names
 AGENT_FIRST_TITLES = []
