@@ -854,9 +854,11 @@ class ImportLlama:
 
 
         #standardize empty cells:
-        self.record_full = self.record_full.replace(r"(?i)^\s*(nan|none|null|unknown|unkown|empty|<na>|\(empty\)|"
-                                                    r"\(empty string\))\s*$",
-                                                    pd.NA, regex=True)
+        self.record_full = self.record_full.replace(
+            r"(?i)^\s*(?:nan|none|null|unknown|unkown|empty|<na>|\[empty\]|\(empty\)|\(empty string\)|!!|\?\?|��|॥)\s*$",
+            pd.NA,
+            regex=True,
+        )
 
 
         # Correct swapped UTM northing/easting values.
