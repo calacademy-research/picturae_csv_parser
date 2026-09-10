@@ -757,8 +757,7 @@ class ImportLlama:
         )
 
         self.record_full['LatLongMethod'] = "Specimen coord."
-        self.record_full['Datum'] = ""
-        self.record_full["UtmDatum"] = ""
+        self.record_full[['Datum', 'UtmDatum', "Latitude2", "Longitude2", "Lat2Text", "Long2Text"]] = ""
 
         final_columns = [
             "barcode",
@@ -782,6 +781,10 @@ class ImportLlama:
             "Long1Text",
             "Latitude1",
             "Longitude1",
+            "Lat2Text",
+            "Long2Text",
+            "Latitude2",
+            "Longitude2",
             "failed_coordinate_conversion",
             "OriginalLatLongUnit",
             "SrcLatLongUnit",
