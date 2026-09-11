@@ -267,65 +267,69 @@ class NfnCsvCreate:
         - Clears Quadrangle if TRS blank; clears Datum if UTM blank
         - Returns the updated row dict
         """
-        for i in range(1, max_sets + 1):
-            coord_presence_col = f"coordinates_present_{i}"
-            coord_type = str(row_dict.get(coord_presence_col, "")).strip()
+        field_map = {
+            "Township": "Township",
+            "Range": "Range",
+            "Section": "Section",
+            "Quadrangle": "Quadrangle",
+            "Utm_zone": "Utm_zone",
+            "Utm_easting": "Utm_easting",
+            "Utm_northing": "Utm_northing",
+            "Datum": "Utm_datum",
+        }
+        coordinate_types = {
+            "Yes - TRS (Township Range Section)",
+            "Yes - UTM (Universal Transverse Mercator)",
+        }
 
-            is_trs = coord_type == "Yes - TRS (Township Range Section)"
-            is_utm = coord_type == "Yes - UTM (Universal Transverse Mercator)"
-            do_llm = is_trs or is_utm
+        for i in range(1, max_sets + 1):
+            coord_type = str(
+                row_dict.get(f"coordinates_present_{i}", "")
+            ).strip()
 
             payload = {
-                "Township": str(row_dict.get(f"Township_{i}", "")),
-                "Range": str(row_dict.get(f"Range_{i}", "")),
-                "Section": str(row_dict.get(f"Section_{i}", "")),
-                "Quadrangle": str(row_dict.get(f"Quadrangle_{i}", "")),
-                "Utm_zone": str(row_dict.get(f"Utm_zone_{i}", "")),
-                "Utm_easting": str(row_dict.get(f"Utm_easting_{i}", "")),
-                "Utm_northing": str(row_dict.get(f"Utm_northing_{i}", "")),
-                "Datum": str(row_dict.get(f"Utm_datum_{i}", "")),
+                field: str(row_dict.get(f"{column}_{i}", ""))
+                for field, column in field_map.items()
+            }
+            response = payload
+
+            if coord_type in coordinate_types and any(
+                    not detect_is_empty(value) for value in payload.values()
+            ):
+                response = self.send_to_llm(
+                    json.dumps(payload),
+                    system_prompt=system_prompt,
+                )
+
+                if not isinstance(response, dict):
+                    self.logger.warning(
+                        "coord set %s - LLM failed: %s", i, response
+                    )
+                    response = payload
+
+                self.logger.info("coord set %s - LLM output: %s", i, response)
+
+            cleaned = {
+                field: response.get(field, "")
+                for field in field_map
             }
 
-            all_blank = all(detect_is_empty(v) for v in payload.values())
+            if all(
+                    detect_is_empty(cleaned[field])
+                    for field in ("Township", "Range", "Section")
+            ):
+                cleaned["Quadrangle"] = ""
 
-            # Run LLM if appropriate; otherwise keep as-is
-            if do_llm and not all_blank:
-                resp = self.send_to_llm(json.dumps(payload), system_prompt=system_prompt)
-                if not isinstance(resp, dict):
-                    self.logger.warning(f"coord set {i} - LLM failed: {resp}")
-                    resp = payload.copy()
+            if all(
+                    detect_is_empty(cleaned[field])
+                    for field in ("Utm_zone", "Utm_easting", "Utm_northing")
+            ):
+                cleaned["Datum"] = ""
 
-                self.logger.info(f"coord set {i} - LLM output: {resp}")
-            else:
-                resp = payload
-
-            # Normalize and apply clearing rules
-            township = resp.get("Township", "")
-            range_ = resp.get("Range", "")
-            section = resp.get("Section", "")
-            quadrangle = resp.get("Quadrangle", "")
-            utm_zone_r = resp.get("Utm_zone", "")
-            utm_easting_r = resp.get("Utm_easting", "")
-            utm_northing_r = resp.get("Utm_northing", "")
-            datum_r = resp.get("Datum", "")
-
-            trs_blank = all(detect_is_empty(x) for x in (township, range_, section))
-            utm_blank = all(detect_is_empty(x) for x in (utm_zone_r, utm_easting_r, utm_northing_r))
-
-            if trs_blank:
-                quadrangle = ""
-            if utm_blank:
-                datum_r = ""
-
-            # Write back
-            row_dict[f"Township_{i}"] = township
-            row_dict[f"Range_{i}"] = range_
-            row_dict[f"Section_{i}"] = section
-            row_dict[f"Quadrangle_{i}"] = quadrangle
-            row_dict[f"Utm_zone_{i}"] = utm_zone_r
-            row_dict[f"Utm_easting_{i}"] = utm_easting_r
-            row_dict[f"Utm_northing_{i}"] = utm_northing_r
-            row_dict[f"Utm_datum_{i}"] = datum_r
+            row_dict.update({
+                f"{column}_{i}": cleaned[field]
+                for field, column in field_map.items()
+            })
 
         return row_dict
 
