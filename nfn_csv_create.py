@@ -16,6 +16,7 @@ import math
 import re
 from label_reconciliations.core import run_on_dataframe
 from coordinate_parser.parser import parse_coordinate
+from geo_utils import get_lat_long_unit
 
 
 # https://pypi.org/project/coordinate-parser/
@@ -32,6 +33,8 @@ class NfnCsvCreate:
 
         self.row = None
         self.index = None
+        self.unrec_df = None
+        self.rec_df = None
 
         self.master_csv = self.read_and_concat_csvs()
 
@@ -780,7 +783,8 @@ class NfnCsvCreate:
     def reconcile_rows(self):
         """calls reconciler to perform final row combination"""
         column_types = self.infer_column_types(self.master_csv)
-        unrec_df, rec_df = run_on_dataframe(
+
+        self.unrec_df, self.rec_df = run_on_dataframe(
             self.master_csv,
             column_types=column_types,
             format_choice="csv",
@@ -790,9 +794,35 @@ class NfnCsvCreate:
         )
 
         # remove suffix from reconciler
-        rec_df.columns = rec_df.columns.str.replace(r'(_\d+)$', '', regex=True)
+        self.rec_df.columns = self.rec_df.columns.str.replace(r'(_\d+)$', '', regex=True)
 
-        return unrec_df, rec_df
+    def add_coord_classifiers(self):
+        """add in required coord columns to match database"""
+        self.rec_df["OriginalLatLongUnit"] = self.rec_df.apply(
+            lambda row: get_lat_long_unit(
+                row.get("LatText1", ""),
+                row.get("LongText1", ""),
+            ),
+            axis=1,
+        )
+        self.rec_df["SrcLatLongUnit"] = self.rec_df["OriginalLatLongUnit"]
+
+        self.rec_df['LatLongMethod'] = "Specimen coord."
+
+        move_columns = [
+            "OriginalLatLongUnit",
+            "SrcLatLongUnit",
+            "LatLongMethod",
+        ]
+
+        # repositioning the columns after datum for readibility
+
+        columns = [col for col in self.rec_df.columns if col not in move_columns]
+        position = columns.index("Datum") + 1
+        columns[position:position] = move_columns
+
+        self.rec_df = self.rec_df[columns]
+
 
     def run_all_methods(self):
         """master function which runs each cleaning step"""
@@ -844,9 +874,11 @@ class NfnCsvCreate:
 
         self.master_csv["multiple_coord_2"] = self.master_csv.apply(self.multiple_coord, axis=1)
 
-        unrec_csv, rec_csv = self.reconcile_rows()
+        self.reconcile_rows()
 
-        rec_csv.to_csv(
+        self.add_coord_classifiers()
+
+        self.rec_df.to_csv(
             f"nfn_csv{os.path.sep}nfn_csv_output{os.path.sep}{output_base_name}_reconciled.csv",
             sep=',',
             quoting=csv.QUOTE_ALL,

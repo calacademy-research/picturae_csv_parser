@@ -9,6 +9,7 @@ from coordinate_parser.parser import parse_coordinate
 from string_utils import detect_is_empty
 from difflib import SequenceMatcher
 from gen_import_utils import clean_numeric_column, clean_utm_zone, correct_swapped_utm
+from geo_utils import get_lat_long_unit
 
 class ImportLlama:
     def __init__(self, csv_path: str, hemisphere: str = "NorthWest"):
@@ -585,90 +586,6 @@ class ImportLlama:
         return not (latitude_converted and longitude_converted)
 
 
-    def get_lat_long_unit(self, row):
-        """
-        Determine original latitude/longitude format.
-
-        Returns:
-            0 = Decimal degrees
-            1 = Degrees/minutes/seconds (DMS)
-            2 = Degrees/decimal minutes (DM)
-        """
-
-        def classify_coordinate(value):
-            if detect_is_empty(value):
-                return None
-
-            text = str(value).strip()
-
-            # Normalize common Unicode coordinate symbols.
-            text = (
-                text
-                .replace("′", "'")
-                .replace("’", "'")
-                .replace("″", '"')
-                .replace("“", '"')
-                .replace("”", '"')
-            )
-
-            # Remove hemisphere indicators so they don't interfere.
-            text = re.sub(
-                r"\b(?:N|S|E|W)\b\.?",
-                "",
-                text,
-                flags=re.IGNORECASE,
-            ).strip()
-
-            # Extract numeric components.
-            numbers = re.findall(
-                r"\d+(?:\.\d+)?",
-                text,
-            )
-
-            # Explicit seconds marker -> DMS.
-            if '"' in text:
-                return 1
-
-            # Three numeric components:
-            if len(numbers) >= 3:
-                return 1
-
-            # Two numeric components:
-            if len(numbers) == 2:
-                return 2
-
-            # One numeric component:
-            if len(numbers) == 1:
-                return 0
-
-            return None
-
-        lat_unit = classify_coordinate(
-            row.get("verbatimLatitude")
-        )
-
-        lon_unit = classify_coordinate(
-            row.get("verbatimLongitude")
-        )
-
-        units = [
-            unit
-            for unit in (lat_unit, lon_unit)
-            if unit is not None
-        ]
-
-        if not units:
-            return 0
-
-        # If either coordinate is clearly DMS, preserve DMS.
-        if 1 in units:
-            return 1
-
-        # Otherwise if either is DM, use DM.
-        if 2 in units:
-            return 2
-
-        return 0
     def clean_coordinates(self):
         """
         Convert the single VerbatimLatitude and VerbatimLongitude
@@ -685,9 +602,7 @@ class ImportLlama:
             )
 
         self.record_full["OriginalLatLongUnit"] = self.record_full.apply(
-            self.get_lat_long_unit,
-            axis=1,
-        )
+            lambda row: get_lat_long_unit(row["verbatimLatitude"], row["verbatimLongitude"]), axis=1)
 
         self.record_full["SrcLatLongUnit"] = self.record_full["OriginalLatLongUnit"]
 
