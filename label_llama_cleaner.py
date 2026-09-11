@@ -175,10 +175,7 @@ class ImportLlama:
             if isinstance(parsed, list):
                 return parsed
 
-            if isinstance(parsed, tuple):
-                return list(parsed)
-
-            if isinstance(parsed, set):
+            if isinstance(parsed, (tuple, set)):
                 return list(parsed)
 
             return [parsed]
@@ -440,63 +437,26 @@ class ImportLlama:
         return pd.NA
 
 
-    def remove_dm_elevations(self, elevation_min, elevation_max, elevation_unit):
-        """
-        Empty the parsed elevation fields for rows whose only detected
-        elevation unit is dm.
-
-        Rows containing dm together with ft or m are preserved because
-        parse_elevation_unit() prioritizes ft and m.
-        """
-        if elevation_unit == "dm":
-            return pd.NA, pd.NA, pd.NA
-
-        return elevation_min, elevation_max, elevation_unit
-
-
     def remove_plant_height_elev(self, elevation_min,elevation_max, elevation_unit, verbatim_elevation,):
         """
         Clear single elevation values when VerbatimElevation suggests
         the number describes plant height rather than geographic elevation.
         """
 
-        if detect_is_empty(verbatim_elevation):
-            return elevation_min, elevation_max, elevation_unit
+        if not detect_is_empty(verbatim_elevation):
+            pattern = r"""
+                    \b
+                    \d+(?:\.\d+)?
+                    \s*
+                    (?:ft|feet|foot|m|meter|meters|metre|metres|dm)?
+                    \.?
+                    \s*
+                    (?:tall|high|height)
+                    \b
+                """
 
-        text = str(verbatim_elevation)
-
-        plant_height_pattern = re.compile(
-            r"""
-            \b
-            \d+(?:\.\d+)?          # first number
-            \s*[-–—]\s*            # hyphen/en-dash/em-dash
-            \d+(?:\.\d+)?          # second number
-            \s*
-            (?:ft|feet|foot|m|meter|meters|metre|metres|dm)?
-            \.?
-            \s*
-            (?:tall|high|height)
-            \b
-            """,
-            flags=re.IGNORECASE | re.VERBOSE,
-        )
-
-        single_height_pattern = re.compile(
-            r"""
-            \b
-            \d+(?:\.\d+)?
-            \s*
-            (?:ft|feet|foot|m|meter|meters|metre|metres|dm)?
-            \.?
-            \s*
-            (?:tall|high|height)
-            \b
-            """,
-            flags=re.IGNORECASE | re.VERBOSE,
-        )
-
-        if plant_height_pattern.search(text) or single_height_pattern.search(text):
-            return pd.NA, pd.NA, pd.NA
+            if re.search(pattern, str(verbatim_elevation), flags=re.IGNORECASE | re.VERBOSE):
+                return pd.NA, pd.NA, pd.NA
 
         return elevation_min, elevation_max, elevation_unit
 
@@ -734,10 +694,6 @@ class ImportLlama:
         habitat_norm = normalize(habitat)
         taxa_norm = normalize(associated_taxa)
 
-        # Exact duplicate after normalization
-        if habitat_norm == taxa_norm:
-            return habitat
-
         # One value is already contained in the other
         if taxa_norm in habitat_norm:
             return habitat
@@ -756,7 +712,7 @@ class ImportLlama:
             # Keep the longer/more informative version
             return max((habitat, associated_taxa), key=len)
 
-        return f"{habitat.rstrip('.')}." + f" {associated_taxa.lstrip()}"
+        return f"{habitat.rstrip('.')}. {associated_taxa}"
 
     def clean_llamaframe(self):
 
@@ -797,7 +753,7 @@ class ImportLlama:
 
         self.parse_columns()
 
-        self.record_full.to_csv(output_path, index=False, sep=",")
+        self.record_full.to_csv(output_path, index=False)
 
         logging.info(f"Cleaned CSV written to: {output_path}")
 
