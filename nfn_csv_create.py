@@ -3,7 +3,6 @@ import time_utils
 from collections import defaultdict
 import os
 from get_configs import get_config
-from sql_csv_utils import SqlCsvTools
 from string_utils import remove_non_numerics, detect_is_empty
 import numpy as np
 import csv
@@ -40,17 +39,11 @@ class NfnCsvCreate:
 
         self.unpack_json()
 
-        self.datums = self.config.ACCEPTED_DATUMS
-
-        self.sql_csv_tools = SqlCsvTools(config=self.config)
-
         self.ollama_url = self.config.OLLAMA_URL
 
         self.hemisphere = hemisphere
 
         self.model = model
-
-        self.nominatum_dict = {}
 
         # writing out uncleaned df for testing purposes
         self.master_csv.to_csv(
@@ -103,40 +96,35 @@ class NfnCsvCreate:
 
         return output
 
-    def extract_value(self, cell, value):
-        """extracts a value from a json"""
-        d = json.loads(cell)
-        inner = next(iter(d.values()))
-        return inner.get(value, None)
 
     def unpack_json(self):
-        """function used to unpack json blobs in standard nfn classification ouput"""
+        """function used to unpack json blobs in standard nfn classification out-put"""
 
-        self.master_csv.drop(columns=["metadata"], inplace=True)
+        df = self.master_csv
 
-        # expanding out the annotation fields into columns
-        expanded = self.master_csv["annotations"].apply(self.parse_json_cell)
+        annotations = pd.DataFrame(
+            df["annotations"].map(self.parse_json_cell).tolist(),
+            index=df.index,
+        )
+        subjects = df["subject_data"].map(
+            lambda cell: next(iter(json.loads(cell).values()))
+        )
 
-        expanded_df = pd.DataFrame(expanded.tolist())
+        drop_columns = [
+            "metadata", "annotations", "subject_data", "user_ip",
+            "created_at", "gold_standard", "expert",
+        ]
+        df = pd.concat([df.drop(columns=drop_columns), annotations], axis=1)
 
-        self.master_csv = pd.concat([self.master_csv.drop(columns=["annotations"]), expanded_df], axis=1)
+        fields = ["Barcode", "Country", "State", "County", "CollectorNumber"]
 
-        # extracting barcode field
-        for field_name in ["Barcode", "Country", "State", "County", "CollectorNumber"]:
-            self.master_csv[field_name] = self.master_csv["subject_data"].apply(
-                lambda cell: self.extract_value(cell, field_name))
+        for field in fields:
+            df[field] = subjects.map(lambda subject: subject.get(field))
 
-        self.master_csv.drop(columns=["subject_data", "user_ip", "created_at", "gold_standard", "expert"],
-                             inplace=True)
+        self.master_csv = df[
+            fields + [col for col in df.columns if col not in fields]
+            ]
 
-        # moving barcode to front of dataframe
-        cols = ["Barcode", "Country", "State", "County", "CollectorNumber"] + [col for col in
-                                                                               self.master_csv.columns if
-                                                                               col not in
-                                                                               ["Barcode", "Country", "State",
-                                                                                "County"]]
-
-        self.master_csv = self.master_csv[cols]
 
     def rename_columns(self):
 
@@ -253,21 +241,6 @@ class NfnCsvCreate:
             acc_num = ""
         return acc_num
 
-    def regex_check_coord(self, coord: str, regex_pattern, max_num: int):
-        if coord and not detect_is_empty(coord):
-            # If regex pattern is found anywhere within the coord
-            match = regex_pattern.search(coord)
-            if match:
-                township_number = int(match.group(1))
-                if not (1 <= township_number <= max_num):
-                    coord = ''
-                else:
-                    return coord
-            else:
-                coord = ''
-        else:
-            coord = ''
-        return coord
 
     def clean_trs_utm_llm(self):
         """TRS/UTM cleaning across the DataFrame for only rows with trs/utm present"""
@@ -462,12 +435,6 @@ class NfnCsvCreate:
             self.logger.error("Parsing error detail: %s", e)
             return "Error"
 
-
-    def has_matching_substring(self, row, column1, column2):
-        fullname_parts = str(row[column1]).split()  # Split fullname into parts
-        name_matched_parts = str(row[column2]).split()  # Split name_matched into parts
-        # Check if any part in fullname matches name_matched (case-insensitive)
-        return any(f.lower() == n.lower() for f in fullname_parts for n in name_matched_parts)
 
     def _safe_parse_coord(self, coord_string, coord_type, hemisphere="NorthWest"):
         """
@@ -774,7 +741,7 @@ class NfnCsvCreate:
                 except Exception:
                     return None
 
-        for col in ("Township_2", "Utm_northing_2", "lat_verbatim_2"):
+        for col in ("Township_2", "Utm_northing_2", "LatText2"):
             val = get_val(col)
             if not detect_is_empty(val):
                 return True
@@ -899,10 +866,6 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--input_file", nargs="?",
                         default=None,
                         help="name of nfn batch file")
-
-    parser.add_argument("-l", "--log_level", nargs="?",
-                        default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-                        help="Logging level (default: %(default)s)")
 
     parser.add_argument("-c", "--collection", nargs="?",
                         default="Botany_PIC", choices=["Botany_PIC", "iz", "ich"],
