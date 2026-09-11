@@ -1,7 +1,8 @@
 import math
 import pandas as pd
 from pyproj import Transformer
-
+import re
+from string_utils import detect_is_empty
 
 def euclidean_m(x1, y1, x2, y2):
     return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
@@ -128,3 +129,93 @@ def apply_crs_exceptions(
             break
 
     return df
+
+
+def classify_coordinate(value):
+    """For classifying verbatim coordinates as either DMS, DM, or DD
+       to fill OriginalLatLongUnit/SrcLatLongUnit fields in database locality table.
+    """
+    if detect_is_empty(value):
+        return None
+
+    text = str(value).strip()
+
+    # Normalize common Unicode coordinate symbols.
+    text = (
+        text
+        .replace("′", "'")
+        .replace("’", "'")
+        .replace("″", '"')
+        .replace("“", '"')
+        .replace("”", '"')
+    )
+
+    # Remove hemisphere indicators so they don't interfere.
+    text = re.sub(
+        r"\b(?:N|S|E|W)\b\.?",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # Extract numeric components.
+    numbers = re.findall(
+        r"\d+(?:\.\d+)?",
+        text,
+    )
+
+    # Explicit seconds marker -> DMS.
+    if '"' in text:
+        return 1
+
+    # Three numeric components:
+    if len(numbers) >= 3:
+        return 1
+
+    # Two numeric components:
+    if len(numbers) == 2:
+        return 2
+
+    # One numeric component:
+    if len(numbers) == 1:
+        return 0
+
+    return None
+
+
+def get_lat_long_unit(verbatim_lat, verbatim_long):
+    """
+    Determine original latitude/longitude format.
+
+    Returns:
+        0 = Decimal degrees
+        1 = Degrees/minutes/seconds (DMS)
+        2 = Degrees/decimal minutes (DM)
+    """
+
+    lat_unit = classify_coordinate(
+        verbatim_lat
+    )
+
+    lon_unit = classify_coordinate(
+        verbatim_long
+    )
+
+    units = [
+        unit
+        for unit in (lat_unit, lon_unit)
+        if unit is not None
+    ]
+
+    if not units:
+        return 0
+
+    # If either coordinate is clearly DMS, preserve DMS.
+    if 1 in units:
+        return 1
+
+    # Otherwise if either is DM, use DM.
+    if 2 in units:
+        return 2
+
+    return 0
