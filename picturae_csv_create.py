@@ -23,15 +23,9 @@ import re
 import math
 import pandas as pd
 import numpy as np
-from datetime import datetime
 import geopandas as gpd
-import geodatasets
 from postGIS.post_gis_search import GadmLookup
 from geo_utils import apply_crs_exceptions
-
-
-starting_time_stamp = datetime.now()
-
 
 
 class IncorrectTaxonError(Exception):
@@ -158,7 +152,7 @@ class CsvCreatePicturae:
                 if "batch" in file.lower():
                     self.manifest_list.append(file)
         manifest_count = len(self.manifest_list)
-        if sheet_count != cover_count != manifest_count:
+        if not (sheet_count == cover_count == manifest_count):
             raise ValueError(
                 f"Count of Sheet CSVs, Manifest CSVs, or Cover CSVs do not match {sheet_count} != {cover_count}"
             )
@@ -506,9 +500,7 @@ class CsvCreatePicturae:
             'sheet_notes': 'sheet_notes',
         }
 
-        col_order_list = []
-        for key, value in col_dict.items():
-            col_order_list.append(key)
+        col_order_list = list(col_dict)
 
         self.record_full = self.record_full.reindex(columns=col_order_list)
 
@@ -644,8 +636,7 @@ class CsvCreatePicturae:
         missing_rank_csv = self.record_full.loc[rank1_missing & rank2_missing]
 
         # flags missing family in column
-        missing_family = (self.record_full['Family'].isna() | (self.record_full['Family'] == '') |
-                          (self.record_full['Family'].isnull()))
+        missing_family = (self.record_full['Family'].isna() | (self.record_full['Family'] == ''))
 
         missing_family_csv = self.record_full.loc[missing_family]
 
@@ -824,7 +815,6 @@ class CsvCreatePicturae:
             "invalid_verbatim": "Verbatim date too long at:",
         }
 
-        flagged_data = {}
         message_parts = []
 
         for key, csv_data in data_flag_dict.items():
@@ -873,8 +863,6 @@ class CsvCreatePicturae:
                     f"  {batch}: {items}"
                     for batch, items in batch_to_items.items()
                 )
-
-            flagged_data[key] = batch_to_items
 
             if key == "missing_label":
                 self.logger.warning(
@@ -1482,7 +1470,6 @@ class CsvCreatePicturae:
                     full_name = taxon_strings[0]
                 elif full_name == genus:
                     hybrid_base = full_name
-                    full_name = full_name
                 else:
                     self.logger.error('hybrid base not found')
 
@@ -1607,7 +1594,6 @@ class CsvCreatePicturae:
 
     def image_has_record(self):
         """checks if image name/barcode already in image_db"""
-        self.record_full['image_present_db'] = None
 
         self.record_full['image_present_db'] = self.record_full['image_path'].apply(
             lambda filepath: self.image_client.check_image_db_if_file_imported(
@@ -1794,8 +1780,6 @@ class CsvCreatePicturae:
                 raise ValueError("resolved TNRS data not returned")
 
             self.cleanup_tnrs()
-        else:
-            self.logger.error("bar tax length non-numeric")
 
     def cleanup_tnrs(self):
         """cleanup_tnrs: operations to re-consolidate rows with hybrids parsed for tnrs,
