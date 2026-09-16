@@ -23,15 +23,9 @@ import re
 import math
 import pandas as pd
 import numpy as np
-from datetime import datetime
 import geopandas as gpd
-import geodatasets
 from postGIS.post_gis_search import GadmLookup
 from geo_utils import apply_crs_exceptions
-
-
-starting_time_stamp = datetime.now()
-
 
 
 class IncorrectTaxonError(Exception):
@@ -43,15 +37,14 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, logging_level, verify_region, min_digits=7,):
+    def __init__(self, config, tnrs_ignore, logging_level, verify_region):
         self.tnrs_ignore = str_to_bool(tnrs_ignore)
-        self.verify_region = verify_region
+        self.verify_region = str_to_bool(verify_region)
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
         self.image_client = ImageClient(config=self.picturae_config)
         self.logger = logging.getLogger("CsvCreatePicturae")
         self.logger.setLevel(logging_level)
-        self.min_digits = min_digits
         self.init_all_vars()
 
         self.run_all()
@@ -101,7 +94,7 @@ class CsvCreatePicturae:
     def copy_manifest_from_delivery(self, sheet_list):
         """copies the raw image manifest into the dest folder"""
         for filename in sheet_list:
-            batch_date = remove_non_numerics(str(filename))
+            batch_date = remove_non_numerics(os.path.basename(filename))
             batch_folder = f"CP1_{batch_date}_BATCH_0001"
             manifest_path = f"{self.picturae_config.PREFIX}{os.sep}{batch_folder}{os.sep}{batch_folder}.csv"
             dest_path = f"{self.dir_path}{os.sep}{batch_folder}.csv"
@@ -109,7 +102,7 @@ class CsvCreatePicturae:
                 try:
                     shutil.copy(manifest_path, dest_path)
                 except Exception as e:
-                    InvalidFilenameError(f"Batch manfiest not found in delivery:{e}")
+                    raise InvalidFilenameError(f"Batch manfiest not found in delivery: {e}")
             else:
                 continue
 
@@ -138,10 +131,11 @@ class CsvCreatePicturae:
         for root, dirs, files in os.walk(self.dir_path):
             for file in files:
                 file_string = file.lower()
+                full_path = os.path.abspath(os.path.join(root, file))
                 if "sheet" in file_string:
-                    self.sheet_list.append(file)
+                    self.sheet_list.append(full_path)
                 elif "cover" in file_string:
-                    self.cover_list.append(file)
+                    self.cover_list.append(full_path)
                 else:
                     self.logger.info(f"csv {file} file does not fit format, skipping")
 
@@ -156,9 +150,10 @@ class CsvCreatePicturae:
         for root, dirs, files in os.walk(self.dir_path):
             for file in files:
                 if "batch" in file.lower():
-                    self.manifest_list.append(file)
+                    self.manifest_list.append(os.path.abspath(os.path.join(root, file)))
+
         manifest_count = len(self.manifest_list)
-        if sheet_count != cover_count != manifest_count:
+        if not (sheet_count == cover_count == manifest_count):
             raise ValueError(
                 f"Count of Sheet CSVs, Manifest CSVs, or Cover CSVs do not match {sheet_count} != {cover_count}"
             )
@@ -180,8 +175,6 @@ class CsvCreatePicturae:
             raise ValueError("Invalid csv_level value. It must be 'COVER' or 'SHEET'. or 'MANIFEST'")
 
         for csv_path in data_list:
-            csv_path = self.dir_path + f"{os.path.sep}" + csv_path
-
             if csv_level == "MANIFEST":
                 df = pd.read_csv(csv_path, header=None, names=self.manifest_cols, dtype=str, keep_default_na=False)
                 df = df[["SPECIMEN-BARCODE", "FOLDER-BARCODE"]]
@@ -298,25 +291,28 @@ class CsvCreatePicturae:
 
     def parse_duplicate_notes(self, spec_csv, barcode_dict):
         """Parses a new aggregate duplicate note for barcodes that share the same parent barcode."""
-        self.logger.info(f"{barcode_dict}")
+
+        self.logger.info("%s", barcode_dict)
+
         for parent_barcode, specimen_barcodes in barcode_dict.items():
-            if parent_barcode:
-                common_list = [parent_barcode] + barcode_dict[parent_barcode]
-                total_barcodes = len(common_list)
+            if not parent_barcode:
+                continue
 
-                # Update NOTES for each specimen barcode
-                for barcode in common_list:
+            # Remove repeated barcodes while preserving their order.
+            common_list = list(dict.fromkeys([parent_barcode, *specimen_barcodes]))
 
-                    other_barcodes = [b for b in common_list if b != barcode]
+            if len(common_list) < 2:
+                continue
 
-                    joined_barcodes = f"[{', '.join(other_barcodes)}]"
+            for barcode in common_list:
+                other_barcodes = [
+                    b for b in common_list if b != barcode
+                ]
 
-                    note_message = f"Multi-mount of {total_barcodes} barcodes. See also {joined_barcodes}."
+                note_message = f"Multi-mount of {len(common_list)} barcodes. See also [{', '.join(other_barcodes)}]."
 
-                    spec_csv.loc[spec_csv['SPECIMEN-BARCODE'] == barcode, 'sheet_notes'] = note_message
+                spec_csv.loc[spec_csv["SPECIMEN-BARCODE"] == barcode, "sheet_notes"] = note_message
 
-            else:
-                pass
         return spec_csv
 
     def merge_folder_and_specimen_csvs(self, fold_csv, spec_csv, manifest_csv):
@@ -506,9 +502,7 @@ class CsvCreatePicturae:
             'sheet_notes': 'sheet_notes',
         }
 
-        col_order_list = []
-        for key, value in col_dict.items():
-            col_order_list.append(key)
+        col_order_list = list(col_dict)
 
         self.record_full = self.record_full.reindex(columns=col_order_list)
 
@@ -617,12 +611,12 @@ class CsvCreatePicturae:
                 continue
 
             centuries = {
-                str(int(min_year)).zfill(4)[:2],
-                str(int(max_year)).zfill(4)[:2],
-                str(int(median_year)).zfill(4)[:2],
+                str(int(year)).zfill(4)[:2]
+                for year in (min_year, max_year, median_year)
+                if pd.notna(year)
             }
 
-            if len(centuries) >= 1:
+            if len(centuries) == 1:
                 century_prefix = next(iter(centuries))
                 self.record_full.loc[idx, "start_date_year"] = f"{century_prefix}{raw_year}"
                 self.record_full.loc[idx, "unclear_century"] = False
@@ -644,8 +638,7 @@ class CsvCreatePicturae:
         missing_rank_csv = self.record_full.loc[rank1_missing & rank2_missing]
 
         # flags missing family in column
-        missing_family = (self.record_full['Family'].isna() | (self.record_full['Family'] == '') |
-                          (self.record_full['Family'].isnull()))
+        missing_family = (self.record_full['Family'].isna() | (self.record_full['Family'] == ''))
 
         missing_family_csv = self.record_full.loc[missing_family]
 
@@ -708,7 +701,7 @@ class CsvCreatePicturae:
             return
 
         family_clean = fam.astype(str).str.strip()
-        genus_clean = gen.astype(str).str.strip()
+        genus_clean = gen.fillna("").astype(str).str.strip()
 
         fam_missing = fam.isna() | family_clean.eq("")
         genus_present = genus_clean.ne("")
@@ -824,7 +817,6 @@ class CsvCreatePicturae:
             "invalid_verbatim": "Verbatim date too long at:",
         }
 
-        flagged_data = {}
         message_parts = []
 
         for key, csv_data in data_flag_dict.items():
@@ -873,8 +865,6 @@ class CsvCreatePicturae:
                     f"  {batch}: {items}"
                     for batch, items in batch_to_items.items()
                 )
-
-            flagged_data[key] = batch_to_items
 
             if key == "missing_label":
                 self.logger.warning(
@@ -1190,17 +1180,15 @@ class CsvCreatePicturae:
             }[(ns, ew)]
 
         # Apply results
-        out.loc[~is_earth, assignable_col] = out.loc[~is_earth, country_col].map(assign_map).fillna(False)
-        out.loc[out[assignable_col], hemisphere_col] = out.loc[out[assignable_col], country_col].map(hemi_map)
-
-        # Force Earth/World to be unassigned
-        out.loc[is_earth, assignable_col] = False
-        out.loc[is_earth, hemisphere_col] = pd.NA
+        out[assignable_col] = (~is_earth) & s.map(assign_map).eq(True)
+        out[hemisphere_col] = s.map(hemi_map).where(out[assignable_col], pd.NA)
 
         if add_debug_cols:
-            out["country_matched"] = (~is_earth) & out[country_col].map(matched_map).fillna(False)
-            out["crosses_equator"] = (~is_earth) & out[country_col].map(eq_map).fillna(False)
-            out["crosses_prime_meridian"] = (~is_earth) & out[country_col].map(pm_map).fillna(False)
+            out["country_matched"] = ((~is_earth) & s.map(matched_map).eq(True))
+
+            out["crosses_equator"] = ((~is_earth) & s.map(eq_map).eq(True))
+
+            out["crosses_prime_meridian"] = ((~is_earth) & s.map(pm_map).eq(True))
 
         return out
 
@@ -1315,7 +1303,7 @@ class CsvCreatePicturae:
                 dbname="gis",
                 user="postgres",
                 password="postgres",
-                port=pic_config.GADM_PORT,
+                port=self.picturae_config.GADM_PORT,
                 adm1_table="public.gadm",
             )
 
@@ -1482,7 +1470,6 @@ class CsvCreatePicturae:
                     full_name = taxon_strings[0]
                 elif full_name == genus:
                     hybrid_base = full_name
-                    full_name = full_name
                 else:
                     self.logger.error('hybrid base not found')
 
@@ -1607,7 +1594,6 @@ class CsvCreatePicturae:
 
     def image_has_record(self):
         """checks if image name/barcode already in image_db"""
-        self.record_full['image_present_db'] = None
 
         self.record_full['image_present_db'] = self.record_full['image_path'].apply(
             lambda filepath: self.image_client.check_image_db_if_file_imported(
@@ -1726,39 +1712,43 @@ class CsvCreatePicturae:
         )
 
         # take the first occurrence of Hybrid/taxname/Genus per fulltaxon
+
+        lookup_cols = ["fulltaxon", "Hybrid", "taxname", "Genus"]
+
         key_df = (
-            self.record_full
-            .loc[:, ['fulltaxon', 'Hybrid', 'taxname', 'Genus']]
-            .dropna(subset=['fulltaxon'])
-            .groupby('fulltaxon', as_index=False)
-            .first()
+            self.record_full[lookup_cols]
+            .dropna(subset=["fulltaxon"])
+            .drop_duplicates()
+            .reset_index(drop=True)
         )
 
         # Apply your lookup exactly once per unique fulltaxon
-        taxon_process_output = key_df.apply(lambda row: self.taxon_process_row(row), axis=1, result_type='expand')
-        taxon_process_output.columns = ['taxon_id', 'new_genus']
+        results = pd.DataFrame([self.taxon_process_row(row) for _, row in key_df.iterrows()],
+                                columns=["taxon_id", "new_genus"], index=key_df.index)
 
-        # Enforce unique index
-        taxon_map_df = (
-            key_df[['fulltaxon']]
-            .join(taxon_process_output)
-            .set_index('fulltaxon', verify_integrity=True)
+        lookup = key_df.join(results).set_index(lookup_cols,verify_integrity=True)
+
+        # Match each original row
+        row_keys = pd.MultiIndex.from_frame(self.record_full[lookup_cols])
+
+        matched = lookup.reindex(row_keys)
+
+        # Assign in original row order.
+        self.record_full["taxon_id"] = pd.array(matched["taxon_id"], dtype="Int64")
+
+        self.record_full["new_genus"] = (matched["new_genus"].to_numpy())
+
+        # Preserve taxon_idx as an alphabetical index of fulltaxon.
+        codes, _ = pd.factorize(
+            self.record_full["fulltaxon"],
+            sort=True,
         )
+        taxon_idx = pd.array(codes, dtype="Int64")
+        taxon_idx[taxon_idx == -1] = pd.NA
 
-        # Factorize yields [0..n-1] in the order of appearance; use sort=True if you want alphabetical stability
-        codes, uniques = pd.factorize(taxon_map_df.index, sort=True)
-        taxon_map_df['fulltaxon_idx'] = codes  # Int64 dtype by default
+        self.record_full["taxon_idx"] = taxon_idx
 
-        # Map the results back
-        self.record_full['taxon_id'] = self.record_full['fulltaxon'].map(taxon_map_df['taxon_id'])
-        self.record_full['new_genus'] = self.record_full['fulltaxon'].map(taxon_map_df['new_genus'])
-        self.record_full['taxon_idx'] = self.record_full['fulltaxon'].map(taxon_map_df['fulltaxon_idx'])
-
-        # Keep nullable Int64
-        self.record_full['taxon_id'] = self.record_full['taxon_id'].astype(pd.Int64Dtype())
-        self.record_full['taxon_idx'] = self.record_full['taxon_idx'].astype(pd.Int64Dtype())
-
-        self.record_full.drop(columns=['fulltaxon'], inplace=True)
+        self.record_full.drop(columns=["fulltaxon"], inplace=True)
 
     def taxon_check_tnrs(self):
         """taxon_check_real:
@@ -1793,9 +1783,7 @@ class CsvCreatePicturae:
             else:
                 raise ValueError("resolved TNRS data not returned")
 
-            self.cleanup_tnrs()
-        else:
-            self.logger.error("bar tax length non-numeric")
+        self.cleanup_tnrs()
 
     def cleanup_tnrs(self):
         """cleanup_tnrs: operations to re-consolidate rows with hybrids parsed for tnrs,
@@ -1820,8 +1808,9 @@ class CsvCreatePicturae:
         self.record_full['missing_rank'] = self.record_full['missing_rank'].replace({'True': True,
                                                                                      'False': False}).astype(bool)
         # mask for successful match
-        good_match = (pd.notna(self.record_full['name_matched']) & self.record_full['name_matched'] != '') & \
-                     (self.record_full['overall_score'] >= .99)
+        good_match = (self.record_full["name_matched"].notna() & self.record_full["name_matched"].ne("")
+                      & self.record_full["overall_score"].ge(0.99))
+
         # creating mask for missing ranks
         rank_mask = (self.record_full['missing_rank'] == True) & \
                     (self.record_full['fullname'] != self.record_full['name_matched']) & good_match
@@ -1851,24 +1840,15 @@ class CsvCreatePicturae:
         taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
                                             (pd.notna(self.record_full['overall_score'])) &
                                             (self.record_full['overall_score'] != 0)]
-        taxon_correct_table = []
 
-        try:
-            taxon_correct_table = (taxon_to_correct[['CSV_batch', 'fullname', 'name_matched', 'overall_score']]
-                                   .drop_duplicates().sort_values(by=['CSV_batch', 'fullname']).reset_index(drop=True))
+        taxon_correct_table = (taxon_to_correct[['CSV_batch', 'fullname', 'name_matched', 'overall_score']]
+                               .drop_duplicates().sort_values(by=['CSV_batch', 'fullname']).reset_index(drop=True))
 
-            taxon_correct_table = taxon_correct_table.sort_values(
-                by=['CSV_batch', 'CatalogNumber']
-            )
-
-            assert len(taxon_correct_table) <= 0
-
-        except:
+        if not taxon_correct_table.empty:
             raise IncorrectTaxonError(
-                f'TNRS has rejected taxonomic names at '
-                f'the following batches:\n{taxon_correct_table.to_string(index=False)}'
+                "TNRS has rejected taxonomic names at the following batches:\n"
+                + taxon_correct_table.to_string(index=False)
             )
-
 
     def read_and_merge_image_manifest(self):
         """to keep taxonomic family consistent with herbarium cabinet order,
@@ -1980,13 +1960,8 @@ if __name__ == "__main__":
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: %(default)s)")
 
-    parser.add_argument("-m", "--min_digits", nargs="?", required=False, help="number of min digits for a barcode, "
-                                                                              "useful for setting a threshold"
-                                                                              " for duplicates in the notes section")
-
-    parser.add_argument("-vr", "--verify_region", nargs="?", required=False,
-                        help="verify region or country, default to country, input boolean True to change",
-                        default=True)
+    parser.add_argument("-vr", "--verify_region", nargs="?", const=True, default=True,
+                        help="True checks country and region; False checks country only (default: True)")
 
     args = parser.parse_args()
 
