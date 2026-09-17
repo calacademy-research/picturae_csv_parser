@@ -489,7 +489,7 @@ class CsvCreatePicturae:
             'MINIMUM-ELEVATION': 'min_elevation',
             'MAXIMUM-ELEVATION': 'max_elevation',
             'ELEVATION-UNITS-(FT-OR-M)': 'elevation_unit',
-            'SPECIMEN - DESCRIPTION': 'specimen_desc',
+            'SPECIMEN-DESCRIPTION': 'specimen_desc',
             'HABITAT-+-ASSOCIATED-SPECIES': 'habitat',
             'VERBATIM-DATE': 'verbatim_date',
             'START-DATE-MONTH-(MM)': 'start_date_month',
