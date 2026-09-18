@@ -11,7 +11,7 @@ from difflib import SequenceMatcher
 from gen_import_utils import clean_numeric_column, clean_utm_zone, correct_swapped_utm
 from geo_utils import get_lat_long_unit
 
-class ImportLlama:
+class LlamaClean:
     def __init__(self, csv_path: str, hemisphere: str = "NorthWest"):
         self.csv_path = csv_path
         self.hemisphere = hemisphere
@@ -310,6 +310,8 @@ class ImportLlama:
         """extract elevation values and ranges,
              with meters taking priority over equivalent elevations in feet
          """
+        empty_result = (pd.NA, pd.NA, pd.NA)
+
         if self.parse_sea_level(verbatim_elevation):
             return pd.Series([0, pd.NA, pd.NA])
 
@@ -317,89 +319,46 @@ class ImportLlama:
         units = self.parse_list_value(elevation_units)
 
         if not values or not units:
-            return pd.Series([pd.NA, pd.NA, pd.NA])
+            return empty_result
 
         # If one unit applies to multiple extracted values, use that unit
         if len(units) == 1 and len(values) > 1:
             units = units * len(values)
-
-        # Any other mismatch is ambiguous.
         elif len(values) != len(units):
-            return pd.Series([pd.NA, pd.NA, pd.NA])
+            return empty_result
 
-        pairs = self.filter_pairs_to_verbatim(
-            values,
-            units,
-            verbatim_elevation,
-        )
+        pairs = self.filter_pairs_to_verbatim(values, units, verbatim_elevation)
 
-        if not pairs:
-            return pd.Series([pd.NA, pd.NA, pd.NA])
+        values_by_unit = {"m": [], "ft": []}
 
-        for value, unit in zip(values, units):
-            try:
-                numeric_value = float(value)
-            except (TypeError, ValueError):
-                continue
-
-            normalized_unit = self.parse_elevation_unit(unit)
-
-            if normalized_unit not in {"m", "ft"}:
-                continue
-
-            pairs.append((numeric_value, normalized_unit))
-
-        if not pairs:
-            return pd.Series([pd.NA, pd.NA, pd.NA])
-
-        values_by_unit = {
-            "m": [value for value, unit in pairs if unit == "m"],
-            "ft": [value for value, unit in pairs if unit == "ft"],
-        }
+        for value, unit in pairs:
+            if unit in values_by_unit:
+                values_by_unit[unit].append(value)
 
         meter_values = values_by_unit["m"]
         feet_values = values_by_unit["ft"]
 
-        # Select the unit with the most aligned values.
-        # Meters win ties.
         if len(meter_values) >= len(feet_values):
-            selected_values = meter_values
-            selected_unit = "m"
+            selected_values, selected_unit = meter_values, "m"
         else:
-            selected_values = feet_values
-            selected_unit = "ft"
+            selected_values, selected_unit = feet_values, "ft"
 
         if not selected_values:
-            return pd.Series([pd.NA, pd.NA, pd.NA])
+            return empty_result
 
         elevation_min = min(selected_values)
+        elevation_max = max(selected_values)
 
-        elevation_max = (
-            max(selected_values)
-            if len(selected_values) > 1
-            else pd.NA
-        )
-
-        if (
-                pd.notna(elevation_max)
-                and elevation_min == elevation_max
-        ):
+        if elevation_min == elevation_max:
             elevation_max = pd.NA
 
-        elevation_min, elevation_max, selected_unit = (
-            self.remove_plant_height_elev(
-                elevation_min,
-                elevation_max,
-                selected_unit,
-                verbatim_elevation,
-            )
-        )
-
-        return pd.Series([
+        return self.remove_plant_height_elev(
             elevation_min,
             elevation_max,
             selected_unit,
-        ])
+            verbatim_elevation,
+        )
+
 
     def parse_elevation_unit(self, value):
         """
@@ -551,26 +510,25 @@ class ImportLlama:
         Convert the single VerbatimLatitude and VerbatimLongitude
         pair into numeric latitude and longitude columns.
         """
-        required_columns = {"verbatimLatitude", "verbatimLongitude"}
 
+        required_columns = {"verbatimLatitude", "verbatimLongitude"}
         missing_columns = required_columns.difference(self.record_full.columns)
 
         if missing_columns:
             raise KeyError(
-                "Missing required coordinate columns: "
-                f"{sorted(missing_columns)}"
+                "Missing required coordinate columns: {sorted(missing_columns)}"
             )
 
-        self.record_full["OriginalLatLongUnit"] = self.record_full.apply(
-            lambda row: get_lat_long_unit(row["verbatimLatitude"], row["verbatimLongitude"]), axis=1)
+        self.record_full["OriginalLatLongUnit"] = [get_lat_long_unit(latitude, longitude)
+                                              for latitude, longitude in zip(self.record_full["verbatimLatitude"],
+                                                                             self.record_full["verbatimLongitude"])]
 
         self.record_full["SrcLatLongUnit"] = self.record_full["OriginalLatLongUnit"]
 
-
-        self.record_full["latitude"] = self.record_full["verbatimLatitude"].apply(
+        self.record_full["latitude"] = self.record_full["verbatimLatitude"].map(
             lambda value: self.safe_parse_coordinate(value, coordinate_type="latitude"))
 
-        self.record_full["longitude"] = self.record_full["verbatimLongitude"].apply(
+        self.record_full["longitude"] = self.record_full["verbatimLongitude"].map(
             lambda value: self.safe_parse_coordinate(value, coordinate_type="longitude"))
 
         self.record_full["failed_coordinate_conversion"] = self.record_full.apply(
@@ -586,25 +544,15 @@ class ImportLlama:
         )
 
         # concatenating associated species to habitat.
-        self.record_full["habitat"] = self.record_full.apply(
-            lambda row: self.combine_habitat_and_taxa(
-                row["habitat"],
-                row["associatedTaxa"]
-            ),
-            axis=1,
-        )
-
-        # dropping uneeded columns
-        self.record_full.drop(columns=["status", "source", "text", "elapsed", "verbatimEventDate",
-                                       "recordedBy", "recordNumber", "identifiedBy", "dateIdentified",
-                                       "_elevationValues", "elevationEstimated", "ERROR", "county"], inplace=True)
-
+        self.record_full["habitat"] = [self.combine_habitat_and_taxa(habitat, taxa) for habitat, taxa in zip(
+                                       self.record_full["habitat"], self.record_full["associatedTaxa"])]
 
         # renaming columns to updater standard
         self.record_full.rename(
             columns={
                 # Habitat / locality
                 "habitat": "Habitat",
+                "occurrenceRemarks": "specimen_description",
                 "locality": "LocalityName",
 
                 # lat/long Coordinates
@@ -641,7 +589,7 @@ class ImportLlama:
             "LocalityName",
             "Habitat",
             "associatedTaxa",
-            "occurrenceRemarks",
+            "specimen_description",
             "trs",
             "Township",
             "RangeDesc",
@@ -722,9 +670,15 @@ class ImportLlama:
 
 
         # Split elevation values.
-        self.record_full[["elevation_min", "elevation_max", "elevation_unit"]] = self.record_full.apply(
-                        lambda row: self.parse_elevation_data(row["_elevationValues"], row["elevationUnits"],
-                                                              row["verbatimElevation"]), axis=1)
+
+        elevation_cols = ["elevation_min", "elevation_max", "elevation_unit"]
+
+        self.record_full[elevation_cols] = pd.DataFrame([self.parse_elevation_data(values, units, verbatim)
+                                                         for values, units, verbatim in zip(
+                                                         self.record_full["_elevationValues"],
+                                                         self.record_full["elevationUnits"],
+                                                         self.record_full["verbatimElevation"],)],
+                                                        index=self.record_full.index, columns=elevation_cols)
 
 
         #standardize empty cells:
@@ -736,9 +690,13 @@ class ImportLlama:
 
 
         # Correct swapped UTM northing/easting values.
-        self.record_full[["utmNorthing", "utmEasting"]] = (self.record_full.apply(lambda row: correct_swapped_utm(
-                                                            row["utmNorthing"], row["utmEasting"]),
-                                                            axis=1, result_type="expand"))
+        utm_cols = ["utmNorthing", "utmEasting"]
+
+        self.record_full[utm_cols] = pd.DataFrame([correct_swapped_utm(northing, easting) for northing, easting in zip(
+                                                  self.record_full["utmNorthing"],
+                                                  self.record_full["utmEasting"])],
+                                                  index=self.record_full.index,
+                                                  columns=utm_cols)
 
         # Convert the single latitude/longitude pair.
         self.clean_coordinates()
@@ -777,6 +735,4 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    importer = ImportLlama(
-        csv_path=args.csv_path,
-        hemisphere=args.hemisphere)
+    importer = LlamaClean(csv_path=args.csv_path, hemisphere=args.hemisphere)
