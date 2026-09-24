@@ -282,6 +282,9 @@ class LlamaClean:
 
             normalized_unit = self.parse_elevation_unit(unit)
 
+            if pd.isna(normalized_unit):
+                continue
+
             pair = (numeric_value, normalized_unit)
 
             if pair in allowed_pairs:
