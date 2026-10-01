@@ -155,7 +155,7 @@ class CsvCreatePicturae:
         manifest_count = len(self.manifest_list)
         if not (sheet_count == cover_count == manifest_count):
             raise ValueError(
-                f"Count of Sheet CSVs, Manifest CSVs, or Cover CSVs do not match {sheet_count} != {cover_count}"
+                f"CSV counts do not match: sheets={sheet_count}, covers={cover_count}, manifests={manifest_count}"
             )
 
     def csv_read_path(self, csv_level: str):
