@@ -21,9 +21,8 @@ def iterate_taxon_resolve(taxon_frame):
 
         results = pd.concat([results, failed_results], ignore_index=True)
 
-        new_index = results.groupby('CatalogNumber')['overall_score'].idxmax()
-
-        results = results.loc[new_index]
+        results = (results.sort_values("overall_score", ascending=False, na_position="last", kind="stable",)
+                   .drop_duplicates(subset="CatalogNumber").sort_index())
     else:
         pass
 
@@ -103,11 +102,3 @@ def process_taxon_resolve(taxon_frame):
     results['overall_score'] = pd.to_numeric(results['overall_score'], errors='coerce')
 
     return results
-
-# taxon_frame = pd.DataFrame({"CatalogNumber": ['123456'], "fullname": "Fissidens submarginatus"})
-#
-# pd.set_option('display.max_columns', None)
-#
-# results = iterate_taxon_resolve(taxon_frame=taxon_frame)
-#
-# print(results)
