@@ -5,14 +5,17 @@ import os
 import logging
 import re
 import pandas as pd
+from get_configs import get_config
 from coordinate_parser.parser import parse_coordinate
 from string_utils import detect_is_empty
 from difflib import SequenceMatcher
 from gen_import_utils import clean_numeric_column, clean_utm_zone, correct_swapped_utm
 from geo_utils import get_lat_long_unit
-
+from sql_csv_utils import SqlCsvTools
 class LlamaClean:
-    def __init__(self, csv_path: str, hemisphere: str = "NorthWest"):
+    def __init__(self, csv_path: str, hemisphere: str = "NorthWest", config="Botany_PIC"):
+        self.config = get_config(config)
+        self.sql_csv_tools = SqlCsvTools(config=self.config)
         self.csv_path = csv_path
         self.hemisphere = hemisphere
 
@@ -537,7 +540,6 @@ class LlamaClean:
         self.record_full["failed_coordinate_conversion"] = self.record_full.apply(
             self.coordinate_conversion_failed, axis=1)
 
-
     def parse_columns(self):
         """combines and extracts information from columns before dropping all but required columns for update."""
 
@@ -665,6 +667,98 @@ class LlamaClean:
 
         return f"{habitat.rstrip('.')}. {associated_taxa}"
 
+
+    def replace_locality_names_from_database(self):
+        """Replace the output LocalityName column with database values."""
+        query = """
+            SELECT l.LocalityName
+            FROM collectionobject AS co
+            JOIN collectingevent AS ce
+                ON ce.CollectingEventID = co.CollectingEventID
+            JOIN locality AS l
+                ON l.LocalityID = ce.LocalityID
+            WHERE co.CatalogNumber = %s
+        """
+
+        barcodes = self.record_full["barcode"].astype("string").str.strip()
+        locality_names = {}
+
+        # Look up each barcode once, preserving leading zeros.
+        for barcode in barcodes.dropna().unique():
+            if not barcode:
+                continue
+
+            logging.info(f"fetching locality for barcode: {barcode}")
+            rows = self.sql_csv_tools.get_records(
+                sql=query,
+                params=(str(barcode).zfill(9),),
+            )
+
+            if not rows:
+                logging.warning(
+                    "No linked database locality found for barcode %s",
+                    barcode,
+                )
+                continue
+
+            if len(rows) > 1:
+                raise ValueError(
+                    f"Multiple database records match CatalogNumber "
+                    f"{barcode!r}; cannot choose a locality."
+                )
+
+            locality_names[barcode] = rows[0][0]
+
+        self.record_full["LocalityName"] = (
+            barcodes.map(locality_names).astype("string")
+        )
+
+
+    def compare_locality_and_habitat(self):
+        """Compare shared phrases containing at least two consecutive words."""
+
+        def normalize(value):
+            if pd.isna(value):
+                return []
+
+            # Ignore case and punctuation while preserving word boundaries.
+            return re.findall(r"[^\W_]+", str(value).casefold())
+
+        def calculate_overlap(locality_words, habitat_words):
+            if not locality_words or not habitat_words:
+                return 0.0
+
+            matcher = SequenceMatcher(
+                None,
+                locality_words,
+                habitat_words,
+                autojunk=False,
+            )
+
+            # Count only matching phrases of two or more consecutive words.
+            matching_words = sum(
+                block.size
+                for block in matcher.get_matching_blocks()
+                if block.size >= 2
+            )
+
+            return (
+                2.0 * matching_words
+                / (len(locality_words) + len(habitat_words))
+            )
+
+        localities = self.record_full["LocalityName"].map(normalize)
+        habitats = self.record_full["Habitat"].map(normalize)
+
+        self.record_full["locality_habitat_overlap"] = [
+            calculate_overlap(locality, habitat)
+            for locality, habitat in zip(localities, habitats)
+        ]
+
+        self.record_full["locality_habitat_overlap_gt_20pct"] = (
+            self.record_full["locality_habitat_overlap"] > 0.20
+        )
+
     def clean_llamaframe(self):
 
         # remove llm artifacts.
@@ -714,6 +808,10 @@ class LlamaClean:
 
         self.parse_columns()
 
+        self.replace_locality_names_from_database()
+
+        self.compare_locality_and_habitat()
+
         self.record_full.to_csv(output_path, index=False)
 
         logging.info(f"Cleaned CSV written to: {output_path}")
@@ -729,8 +827,11 @@ def parse_args():
 
     parser.add_argument("-hm", "--hemisphere", default="NorthWest",
                         choices=["NorthWest", "NorthEast", "SouthWest", "SouthEast"],
-                        help=("Default hemisphere for coordinates without explicit "
-                               "N, S, E, or W indicators. Default: NorthWest."))
+                        help="Default hemisphere for coordinates without explicit "
+                             "N, S, E, or W indicators. Default: NorthWest.")
+
+    parser.add_argument("-cfg", "--config", default="Botany_PIC", required=False,
+                        help="config file to retrieve for sql")
 
     return parser.parse_args()
 
@@ -738,4 +839,4 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    importer = LlamaClean(csv_path=args.csv_path, hemisphere=args.hemisphere)
+    importer = LlamaClean(csv_path=args.csv_path, hemisphere=args.hemisphere, config=args.config)

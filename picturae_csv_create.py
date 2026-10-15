@@ -37,9 +37,10 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, logging_level, verify_region):
+    def __init__(self, config, tnrs_ignore, logging_level, verify_region, family_ignore=False):
         self.tnrs_ignore = str_to_bool(tnrs_ignore)
         self.verify_region = str_to_bool(verify_region)
+        self.family_ignore = family_ignore
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
         self.image_client = ImageClient(config=self.picturae_config)
@@ -820,6 +821,9 @@ class CsvCreatePicturae:
         message_parts = []
 
         for key, csv_data in data_flag_dict.items():
+
+            if key == "missing_family" and self.family_ignore:
+                continue
 
             if key == "missing_label":
                 continue
@@ -1956,6 +1960,9 @@ if __name__ == "__main__":
                                                                               "ignore TNRS' matched name "
                                                                               "for taxa that score < .99")
 
+    parser.add_argument("-f", "--family_ignore", action="store_true", default=False,
+                        help="Skip missing-family validation (checked by default)")
+
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: %(default)s)")
@@ -1968,4 +1975,5 @@ if __name__ == "__main__":
     pic_config = get_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
-                                              tnrs_ignore=args.tnrs_ignore, verify_region=args.verify_region)
+                                             tnrs_ignore=args.tnrs_ignore, verify_region=args.verify_region,
+                                             family_ignore=args.family_ignore)
