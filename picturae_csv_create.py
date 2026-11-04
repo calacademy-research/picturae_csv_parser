@@ -1,8 +1,8 @@
 """picturae_csv_create: this file is for wrangling and creating the dataframe
    and csv with the parsed fields required for upload, in picturae_import.
-   Uses TNRS (Taxonomic Name Resolution Service) in taxon_check/test_TNRS.R
-   to catch spelling mistakes, mis-transcribed taxa.
-   Source for taxon names at IPNI (International Plant Names Index): https://www.ipni.org/ """
+  Lichen branch: checks taxonomic names directly against the Specify database
+  and flags names that are absent from the imported lichen taxonomy.
+"""
 import argparse
 import csv
 import os.path
@@ -16,7 +16,6 @@ from sql_csv_utils import SqlCsvTools
 from specify_db import SpecifyDb
 import logging
 from get_configs import get_config
-from taxon_tools.BOT_TNRS import iterate_taxon_resolve
 from image_client import ImageClient
 from coordinate_parser.parser import parse_coordinate
 import re
@@ -38,7 +37,8 @@ class InvalidFilenameError(Exception):
 
 class CsvCreatePicturae:
     def __init__(self, config, tnrs_ignore, logging_level, verify_region):
-        self.tnrs_ignore = str_to_bool(tnrs_ignore)
+        # Keep the constructor argument name for existing callers.
+        self.taxon_ignore = str_to_bool(tnrs_ignore)
         self.verify_region = str_to_bool(verify_region)
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
@@ -1404,19 +1404,11 @@ class CsvCreatePicturae:
                 row: a row from a csv file containing taxon information with correct column names
 
         """
-        hyb_index = self.record_full.columns.get_loc('Hybrid')
-        is_hybrid = row.iloc[hyb_index]
-
         # defining empty strings for parsed taxon substrings
         full_name = ""
         tax_name = ""
         first_intra = ""
         gen_spec = ""
-        hybrid_base = ""
-
-        gen_index = self.record_full.columns.get_loc('Genus')
-        genus = row.iloc[gen_index]
-
         column_sets = [
             ['Genus', 'Species', 'Rank 1', 'Epithet 1', 'Rank 2', 'Epithet 2'],
             ['Genus', 'Species', 'Rank 1', 'Epithet 1'],
@@ -1434,14 +1426,10 @@ class CsvCreatePicturae:
                     elif columns == column_sets[2]:
                         gen_spec += f" {row.iloc[index]}"
 
-        full_name = full_name.strip()
-        first_intra = first_intra.strip()
-        gen_spec = gen_spec.strip()
-        # creating taxon name
-        # creating temporary string in order to parse taxon names without qualifiers
-        separate_string = remove_qualifiers(full_name)
-
-        taxon_strings = separate_string.split()
+        # Keep complete names, including hybrids, for the database lookup.
+        full_name = " ".join(remove_qualifiers(full_name).split())
+        first_intra = " ".join(remove_qualifiers(first_intra).split())
+        gen_spec = " ".join(remove_qualifiers(gen_spec).split())
 
         second_epithet_in = row.iloc[self.record_full.columns.get_loc('Epithet 2')]
         first_epithet_in = row.iloc[self.record_full.columns.get_loc('Epithet 1')]
@@ -1457,30 +1445,8 @@ class CsvCreatePicturae:
             tax_name = remove_qualifiers(spec_in)
         elif pd.notna(genus_in) and genus_in != '':
             tax_name = remove_qualifiers(genus_in)
-        else:
-            return ValueError('missing taxon in row')
 
-        if is_hybrid is True:
-            if first_intra == full_name:
-                if "var." in full_name or "subsp." in full_name or " f." in full_name or "subf." in full_name:
-                    hybrid_base = full_name
-                    full_name = " ".join(taxon_strings[:2])
-                elif full_name != genus and full_name == gen_spec:
-                    hybrid_base = full_name
-                    full_name = taxon_strings[0]
-                elif full_name == genus:
-                    hybrid_base = full_name
-                else:
-                    self.logger.error('hybrid base not found')
-
-            elif len(first_intra) != len(full_name):
-                if "var." in full_name or "subsp." in full_name or " f." in full_name or "subf." in full_name:
-                    hybrid_base = full_name
-                    full_name = " ".join(taxon_strings[:4])
-                else:
-                    pass
-
-        return str(gen_spec), str(full_name), str(first_intra), str(tax_name), str(hybrid_base)
+        return gen_spec, full_name, first_intra, " ".join(tax_name.split())
 
 
     def col_clean(self):
@@ -1544,23 +1510,17 @@ class CsvCreatePicturae:
 
         self.move_indet_species_to_sheet_notes()
 
-        # filling in missing subtaxa ranks for first infraspecific rank
+        # Retain missing ranks for review; do not guess subsp. or var.
         self.record_full['missing_rank'] = (pd.isna(self.record_full[f'Rank 1']) & pd.notna(
             self.record_full[f'Epithet 1'])) | \
                                            ((self.record_full[f'Rank 1'] == '') & (self.record_full[f'Epithet 1'] != ''))
 
         self.record_full['missing_rank'] = self.record_full['missing_rank'].astype(bool)
 
-        placeholder_rank = (pd.isna(self.record_full['Rank 1']) | (self.record_full['Rank 1'] == '')) & \
-                           (self.record_full['missing_rank'] == True)
-
-        # Set 'Rank 1' to 'subsp.' where the condition is True
-        self.record_full.loc[placeholder_rank, 'Rank 1'] = 'subsp.'
-
         # parsing taxon columns
         self.record_full[['gen_spec', 'fullname',
                           'first_intra',
-                          'taxname', 'hybrid_base']] = self.record_full.apply(self.taxon_concat,
+                          'taxname']] = self.record_full.apply(self.taxon_concat,
                                                                               axis=1, result_type='expand')
 
         # setting datatypes for columns
@@ -1667,6 +1627,9 @@ class CsvCreatePicturae:
 
     def taxon_process_row(self, row):
         """applies taxon_get to a row of the picturae python dataframe"""
+        if not row['fulltaxon']:
+            return None, False
+
         taxon_id = self.sql_csv_tools.taxon_get(
             name=row['fulltaxon'],
             hybrid=str_to_bool(row['Hybrid']),
@@ -1674,13 +1637,15 @@ class CsvCreatePicturae:
         )
         # Check for new genus to verify family assignment
         new_genus = False
-        if taxon_id is None:
+        if pd.isna(taxon_id) or taxon_id == '':
+            taxon_id = None
+        if taxon_id is None and row['Genus']:
             genus_id = self.sql_csv_tools.taxon_get(
                 name=row['Genus'],
                 hybrid=str_to_bool(row['Hybrid']),
                 taxname=row['taxname']
             )
-            if genus_id is None:
+            if pd.isna(genus_id) or genus_id == '':
                 new_genus = True
 
         return taxon_id, new_genus
@@ -1689,8 +1654,7 @@ class CsvCreatePicturae:
         """check_taxa_against_database:
                 concatenates every taxonomic column together to get the full taxonomic name,
                 checks full taxonomic name against database and retrieves taxon_id if present
-                and `None` if absent from db. In TNRS, only taxonomic names with a `None`
-                result will be checked.
+                and `None` if absent from db. No external name resolver is used.
                 args:
                     None
         """
@@ -1711,7 +1675,15 @@ class CsvCreatePicturae:
             axis=1
         )
 
-        # take the first occurrence of Hybrid/taxname/Genus per fulltaxon
+        self.record_full['fulltaxon'] = (
+            self.record_full['fulltaxon'].fillna('').astype(str)
+            .apply(remove_qualifiers).str.split().str.join(' ')
+        )
+        # Use the actual lookup name in the output and in correction messages.
+        self.record_full['fullname'] = self.record_full['fulltaxon']
+        self.record_full['missing_rank'] = self.record_full['missing_rank'].apply(str_to_bool)
+
+        # Keep all lookup inputs when deduplicating names.
 
         lookup_cols = ["fulltaxon", "Hybrid", "taxname", "Genus"]
 
@@ -1722,7 +1694,7 @@ class CsvCreatePicturae:
             .reset_index(drop=True)
         )
 
-        # Apply your lookup exactly once per unique fulltaxon
+        # Look up each distinct set of inputs once.
         results = pd.DataFrame([self.taxon_process_row(row) for _, row in key_df.iterrows()],
                                 columns=["taxon_id", "new_genus"], index=key_df.index)
 
@@ -1748,105 +1720,31 @@ class CsvCreatePicturae:
 
         self.record_full["taxon_idx"] = taxon_idx
 
+        # Preserve the output columns expected by the importer. Scores now mean
+        # database presence (1) or absence (0), not fuzzy name similarity.
+        found = self.record_full['taxon_id'].notna()
+        self.record_full['overall_score'] = found.astype(float)
+        self.record_full['name_matched'] = self.record_full['fulltaxon'].where(found, '')
+        self.record_full['matched_name_author'] = ''
+
         self.record_full.drop(columns=["fulltaxon"], inplace=True)
 
-    def taxon_check_tnrs(self):
-        """taxon_check_real:
-           Sends the concatenated taxon column, through TNRS, to match names,
-           with and without spelling mistakes, only checks base name
-           for hybrids as IPNI does not work well with hybrids
-           """
+    def flag_database_taxa(self):
+        """Flag every taxonomic name that was not found in the database."""
+        if self.taxon_ignore:
+            return
 
-        bar_tax = self.record_full[pd.isna(self.record_full['taxon_id']) | (self.record_full['taxon_id'] == '')]
-
-        if len(bar_tax) <= 0:
-
-            self.record_full['overall_score'] = 1
-
-            self.record_full['name_matched'] = ''
-
-            self.record_full['matched_name_author'] = ''
-
-        elif len(bar_tax) >= 1:
-
-            bar_tax = bar_tax[['CatalogNumber', 'fullname']]
-
-            resolved_taxon = iterate_taxon_resolve(bar_tax)
-
-            resolved_taxon.fillna({'overall_score': 0}, inplace=True)
-
-            resolved_taxon = resolved_taxon.drop(columns=["fullname", "unmatched_terms"])
-
-            # merging columns on Catalog Number
-            if len(resolved_taxon) > 0:
-                self.record_full = pd.merge(self.record_full, resolved_taxon, on="CatalogNumber", how="left")
-            else:
-                raise ValueError("resolved TNRS data not returned")
-
-        self.cleanup_tnrs()
-
-    def cleanup_tnrs(self):
-        """cleanup_tnrs: operations to re-consolidate rows with hybrids parsed for tnrs,
-            and rows with missing rank parsed for tnrs.
-            Separates qualifiers into new column as well.
-            note: Threshold of .99 is set so that it will flag any taxon that differs from its match in any way,
-            which is why a second taxon-concat is not run.
-        """
-
-        # re-consolidating hybrid column to fullname and removing hybrid_base column
-
-        self.record_full['hybrid_base'] = self.record_full['hybrid_base'].astype(str).str.strip()
-
-        hybrid_mask = (self.record_full['hybrid_base'].notna()) & (self.record_full['hybrid_base'] != '')
-
-        self.record_full.loc[hybrid_mask, 'fullname'] = self.record_full.loc[hybrid_mask, 'hybrid_base']
-
-        self.record_full = self.record_full.drop(columns=['hybrid_base'])
-
-        # consolidating taxonomy with replaced rank
-
-        self.record_full['missing_rank'] = self.record_full['missing_rank'].replace({'True': True,
-                                                                                     'False': False}).astype(bool)
-        # mask for successful match
-        good_match = (self.record_full["name_matched"].notna() & self.record_full["name_matched"].ne("")
-                      & self.record_full["overall_score"].ge(0.99))
-
-        # creating mask for missing ranks
-        rank_mask = (self.record_full['missing_rank'] == True) & \
-                    (self.record_full['fullname'] != self.record_full['name_matched']) & good_match
-
-        # replacing good matches with their matched names
-        self.record_full.loc[rank_mask, 'fullname'] = self.record_full.loc[rank_mask, 'name_matched']
-
-        # replacing rank for missing rank cases in first intra and full taxon
-        for col in ['fullname', 'first_intra']:
-            self.record_full.loc[rank_mask, col] = \
-                self.record_full.loc[rank_mask, col].str.replace(" subsp. ", " var. ",
-                                                                 regex=False)
-
-        for col in ['fullname', 'gen_spec', 'first_intra', 'taxname']:
-            self.record_full[col] = self.record_full[col].apply(remove_qualifiers)
-
-        # pulling new tax IDs for corrected missing ranks
-
-        self.record_full.loc[rank_mask, 'taxon_id'] = self.record_full.loc[rank_mask, 'fullname'].apply(
-            self.sql_csv_tools.taxon_get)
-
-        if self.tnrs_ignore is False:
-            self.flag_tnrs_rows()
-
-    def flag_tnrs_rows(self):
-        """function to flag TNRS rows that do not pass the .99 match threshold"""
-        taxon_to_correct = self.record_full[(self.record_full['overall_score'] < 0.99) &
-                                            (pd.notna(self.record_full['overall_score'])) &
-                                            (self.record_full['overall_score'] != 0)]
-
-        taxon_correct_table = (taxon_to_correct[['CSV_batch', 'fullname', 'name_matched', 'overall_score']]
-                               .drop_duplicates().sort_values(by=['CSV_batch', 'fullname']).reset_index(drop=True))
+        taxon_to_correct = self.record_full.loc[self.record_full['taxon_id'].isna()]
+        taxon_correct_table = (
+            taxon_to_correct[['CSV_batch', 'CatalogNumber', 'fullname']]
+            .drop_duplicates()
+            .sort_values(by=['CSV_batch', 'fullname', 'CatalogNumber'])
+            .reset_index(drop=True)
+        )
 
         if not taxon_correct_table.empty:
             raise IncorrectTaxonError(
-                "TNRS has rejected taxonomic names at the following batches:\n"
+                "Taxonomic names not found in the Specify database at the following batches/barcodes:\n"
                 + taxon_correct_table.to_string(index=False)
             )
 
@@ -1926,8 +1824,8 @@ class CsvCreatePicturae:
         self.col_clean()
         # check taxa against db
         self.check_taxa_against_database()
-        # running taxa through TNRS
-        self.taxon_check_tnrs()
+        # Flag unmatched names at the taxonomy review step.
+        self.flag_database_taxa()
         # checking if barcode record present in database
         self.barcode_has_record()
         # checking if barcode has valid image file
@@ -1952,9 +1850,12 @@ if __name__ == "__main__":
                         dest='verbose',
                         action='count')
 
-    parser.add_argument("-t", "--tnrs_ignore", nargs="?", required=True, help="True or False, choice to "
-                                                                              "ignore TNRS' matched name "
-                                                                              "for taxa that score < .99")
+    parser.add_argument(
+        "-t", "--taxon_ignore", "--tnrs_ignore", dest="taxon_ignore",
+        nargs="?", const=True, default=False,
+        help="True skips errors for taxa missing from the database; False flags them "
+             "(default: False). --tnrs_ignore is a compatibility alias."
+    )
 
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -1968,4 +1869,4 @@ if __name__ == "__main__":
     pic_config = get_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
-                                              tnrs_ignore=args.tnrs_ignore, verify_region=args.verify_region)
+                                              tnrs_ignore=args.taxon_ignore, verify_region=args.verify_region)
