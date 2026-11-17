@@ -1487,6 +1487,34 @@ class CsvCreatePicturae:
         return str(gen_spec), str(full_name), str(first_intra), str(tax_name), str(hybrid_base)
 
 
+    def add_date_precision(self):
+        """Add nullable precision codes from the original date components.
+
+        Year only = 3, year/month = 2, and year/month/day = 1.
+        Empty dates and other incomplete combinations remain null.
+        """
+        for prefix in ("start", "end"):
+            date_col = f"{prefix}_date"
+            precision_col = f"{date_col}_precision"
+            has_year, has_month, has_day = [
+                ~self.record_full[f"{date_col}_{part}"]
+                .astype("string").str.strip().fillna("")
+                .isin(["", "nan", "None", "<NA>"])
+                for part in ("year", "month", "day")
+            ]
+
+            precision = pd.Series(pd.NA, index=self.record_full.index, dtype="Int64")
+            precision.loc[has_year & ~has_month & ~has_day] = 3
+            precision.loc[has_year & has_month & ~has_day] = 2
+            precision.loc[has_year & has_month & has_day] = 1
+
+            self.record_full.drop(columns=[precision_col], errors="ignore", inplace=True)
+            self.record_full.insert(
+                self.record_full.columns.get_loc(date_col) + 1,
+                precision_col,
+                precision,
+            )
+
     def col_clean(self):
         """parses and cleans dataframe columns until ready for upload.
             runs dependent function taxon concat
@@ -1577,6 +1605,9 @@ class CsvCreatePicturae:
         self.record_full = fill_empty_col(self.record_full, string_fill="[unspecified]", col_name="locality")
 
         self.record_full = fill_empty_col(self.record_full, string_fill="[No date on label]", col_name="verbatim_date")
+
+        # Run after string cleanup so precision remains nullable integers.
+        self.add_date_precision()
 
     def barcode_has_record(self):
         """check if barcode / catalog number already in collectionobject table"""
