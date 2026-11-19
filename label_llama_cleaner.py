@@ -549,14 +549,14 @@ class LlamaClean:
         )
 
         # concatenating associated species to habitat.
-        self.record_full["habitat"] = [self.combine_habitat_and_taxa(habitat, taxa) for habitat, taxa in zip(
-                                       self.record_full["habitat"], self.record_full["associatedTaxa"])]
+        self.record_full["Habitat"] = [self.combine_habitat_and_taxa(habitat, taxa) for habitat, taxa in zip(
+                                       self.record_full["Habitat"], self.record_full["associatedTaxa"])]
 
         # renaming columns to updater standard
         self.record_full.rename(
             columns={
                 # Habitat / locality
-                "habitat": "Habitat",
+                "Habitat": "Habitat",
                 "occurrenceRemarks": "specimen_description",
                 "locality": "LocalityName",
 
