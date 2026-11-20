@@ -5,14 +5,26 @@ import os
 import logging
 import re
 import pandas as pd
+from get_configs import get_config
 from coordinate_parser.parser import parse_coordinate
 from string_utils import detect_is_empty
 from difflib import SequenceMatcher
+from html import unescape
 from gen_import_utils import clean_numeric_column, clean_utm_zone, correct_swapped_utm
 from geo_utils import get_lat_long_unit
+from sql_csv_utils import SqlCsvTools
 
 class LlamaClean:
-    def __init__(self, csv_path: str, hemisphere: str = "NorthWest"):
+    # A standalone zero is a placeholder only in descriptive text fields.
+    # Keep valid zeros in coordinates, elevations, identifiers, and flags.
+    TEXT_COLUMNS = frozenset({
+        "country", "stateProvince", "locality", "LocalityName",
+        "Habitat", "associatedTaxa", "occurrenceRemarks", "specimen_description",
+    })
+
+    def __init__(self, csv_path: str, hemisphere: str = "NorthWest", config="Botany_PIC"):
+        self.config = get_config(config)
+        self.sql_csv_tools = SqlCsvTools(config=self.config)
         self.csv_path = csv_path
         self.hemisphere = hemisphere
 
@@ -25,66 +37,73 @@ class LlamaClean:
         self.clean_llamaframe()
 
 
-    def remove_artifacts(self):
-        """
-        Clean artifacts from every text column.
+    @staticmethod
+    def clean_artifact_value(value, *, zero_is_empty=False):
+        """Return pd.NA for artifact-only cells; retain punctuation in real text.
 
-        Removes:
-            - {...} and enclosed content
-            - <...> and enclosed content
-            - ##...## and enclosed content
-            - cells containing only quotes, backticks, hashes, $, or whitespace
-            - placeholder values such as "empty"
+        The existing removal of {...}, <...>, and ##...## content is retained.
+        zero_is_empty must only be enabled for descriptive text fields.
         """
+        if pd.isna(value):
+            return pd.NA
+
+        # Decode escaped quotes/tags, nonbreaking spaces, and similar entities.
+        text = unescape(str(value))
+        text = re.sub(r"[\u200b-\u200d\u2060\ufeff]", "", text)
+
+        # Repeatedly remove nested enclosed artifacts, as in the original cleaner.
+        for _ in range(10):
+            previous = text
+            text = re.sub(r"\{[^{}]*\}", " ", text, flags=re.DOTALL)
+            text = re.sub(r"<[^<>]*>", " ", text, flags=re.DOTALL)
+            text = re.sub(r"##.*?##", " ", text, flags=re.DOTALL)
+
+            if text == previous:
+                break
+
+        text = re.sub(r"[<>{}]", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        # Catch ANY punctuation/symbol-only cell, including >>, '';, ||, and ]].
+        # isalnum() also preserves words containing accented/non-Latin letters.
+        if not any(character.isalnum() for character in text):
+            return pd.NA
+
+        # Ignore outer punctuation only for the placeholder check. Keep the
+        # original punctuation when the value contains meaningful text.
+        placeholder = re.sub(r"^[\W_]+|[\W_]+$", "", text).casefold()
+        if placeholder in {
+            "empty", "empty string", "none", "null", "nan", "na", "n/a",
+            "n.a", "unknown", "unkown", "not available", "not provided",
+            "not recorded", "not specified", "no data",
+        }:
+            return pd.NA
+
+        if zero_is_empty and re.fullmatch(r"0+(?:\.0+)?", placeholder):
+            return pd.NA
+
+        return text
+
+    def clean_text_fields(self):
+        """Recheck descriptive fields after renaming and database lookups."""
+        for column in self.record_full.columns:
+            if column in self.TEXT_COLUMNS:
+                self.record_full[column] = self.record_full[column].map(
+                    lambda value: self.clean_artifact_value(value, zero_is_empty=True)
+                )
+
+    def remove_artifacts(self):
+        """Clean string columns before parsing; clear text-only zero placeholders."""
         string_columns = self.record_full.select_dtypes(
             include=["object", "string"]
         ).columns
 
-        def clean_value(value):
-            if pd.isna(value):
-                return pd.NA
-
-            text = str(value)
-
-            # Repeatedly remove nested enclosed artifacts.
-            for _ in range(10):
-                previous = text
-
-                text = re.sub(r"\{[^{}]*\}", "", text, flags=re.DOTALL)
-                text = re.sub(r"<[^<>]*>", "", text, flags=re.DOTALL)
-                text = re.sub(r"##.*?##", "", text, flags=re.DOTALL)
-
-                if text == previous:
-                    break
-
-            # Remove unmatched enclosure characters and normalize whitespace.
-            text = re.sub(r"[<>{}]", "", text)
-            text = re.sub(r"\s+", " ", text).strip()
-
-            # Remove cells containing only artifact characters.
-            meaningful_text = re.sub(
-                r"""["'`“”‘’#$\s]""",
-                "",
-                text,
+        for column in string_columns:
+            self.record_full[column] = self.record_full[column].map(
+                lambda value: self.clean_artifact_value(
+                    value, zero_is_empty=column in self.TEXT_COLUMNS,
+                )
             )
-
-            if not meaningful_text:
-                return pd.NA
-
-            if meaningful_text.lower() in {
-                "empty",
-                "none",
-                "null",
-                "nan",
-                "unknown",
-            }:
-                return pd.NA
-
-            return text
-
-        self.record_full[string_columns] = self.record_full[
-            string_columns
-        ].apply(lambda column: column.map(clean_value))
 
         for column in ["utmNorthing", "utmEasting"]:
             self.record_full[column] = self.record_full[column].apply(clean_numeric_column)
@@ -537,7 +556,6 @@ class LlamaClean:
         self.record_full["failed_coordinate_conversion"] = self.record_full.apply(
             self.coordinate_conversion_failed, axis=1)
 
-
     def parse_columns(self):
         """combines and extracts information from columns before dropping all but required columns for update."""
 
@@ -547,14 +565,14 @@ class LlamaClean:
         )
 
         # concatenating associated species to habitat.
-        self.record_full["habitat"] = [self.combine_habitat_and_taxa(habitat, taxa) for habitat, taxa in zip(
-                                       self.record_full["habitat"], self.record_full["associatedTaxa"])]
+        self.record_full["Habitat"] = [self.combine_habitat_and_taxa(habitat, taxa) for habitat, taxa in zip(
+                                       self.record_full["Habitat"], self.record_full["associatedTaxa"])]
 
         # renaming columns to updater standard
         self.record_full.rename(
             columns={
                 # Habitat / locality
-                "habitat": "Habitat",
+                "Habitat": "Habitat",
                 "occurrenceRemarks": "specimen_description",
                 "locality": "LocalityName",
 
@@ -624,11 +642,28 @@ class LlamaClean:
 
         self.record_full = self.record_full[final_columns]
 
-
     def combine_habitat_and_taxa(self, habitat, associated_taxa):
-        """combines associated taxa into the habitat field, watching out for duplicated phrases."""
-        habitat = "" if detect_is_empty(habitat) else str(habitat).strip()
-        associated_taxa = "" if detect_is_empty(associated_taxa) else str(associated_taxa).strip()
+        """Combine habitat and taxa, excluding record dumps and duplicates."""
+
+        def clean(value):
+            if detect_is_empty(value):
+                return ""
+
+            text = re.sub(r"\s+", " ", str(value)).strip()
+
+            # Treat punctuation-only values such as "" as empty.
+            if not any(character.isalnum() for character in text):
+                return ""
+
+            # Reject the record-dump pattern shown in your examples:
+            # four or more consecutive empty quoted fields.
+            if re.search(r'(?:^|\s)(?:""\s+){3,}""(?=\s|$)', text):
+                return ""
+
+            return text
+
+        habitat = clean(habitat)
+        associated_taxa = clean(associated_taxa)
 
         if not habitat:
             return associated_taxa
@@ -637,33 +672,116 @@ class LlamaClean:
             return habitat
 
         def normalize(text):
-            text = text.lower()
-            text = re.sub(r"\s+", " ", text)
-            text = re.sub(r"[.,;:\s]+$", "", text)
-            return text.strip()
+            return re.sub(r"[.,;:\s]+$", "", text.casefold()).strip()
 
         habitat_norm = normalize(habitat)
         taxa_norm = normalize(associated_taxa)
 
-        # One value is already contained in the other
         if taxa_norm in habitat_norm:
             return habitat
 
         if habitat_norm in taxa_norm:
             return associated_taxa
 
-        # Catch very close duplicates caused by minor OCR/punctuation differences
         similarity = SequenceMatcher(
-            None,
-            habitat_norm,
-            taxa_norm
+            None, habitat_norm, taxa_norm
         ).ratio()
 
         if similarity >= 0.90:
-            # Keep the longer/more informative version
             return max((habitat, associated_taxa), key=len)
 
         return f"{habitat.rstrip('.')}. {associated_taxa}"
+
+    def replace_locality_names_from_database(self):
+        """Replace the output LocalityName column with database values."""
+        query = """
+            SELECT l.LocalityName
+            FROM collectionobject AS co
+            JOIN collectingevent AS ce
+                ON ce.CollectingEventID = co.CollectingEventID
+            JOIN locality AS l
+                ON l.LocalityID = ce.LocalityID
+            WHERE co.CatalogNumber = %s
+        """
+
+        barcodes = self.record_full["barcode"].astype("string").str.strip()
+        locality_names = {}
+
+        # Look up each barcode once, preserving leading zeros.
+        for barcode in barcodes.dropna().unique():
+            if not barcode:
+                continue
+
+            logging.info(f"fetching locality for barcode: {barcode}")
+            rows = self.sql_csv_tools.get_records(
+                sql=query,
+                params=(str(barcode).zfill(9),),
+            )
+
+            if not rows:
+                logging.warning(
+                    "No linked database locality found for barcode %s",
+                    barcode,
+                )
+                continue
+
+            if len(rows) > 1:
+                raise ValueError(
+                    f"Multiple database records match CatalogNumber "
+                    f"{barcode!r}; cannot choose a locality."
+                )
+
+            locality_names[barcode] = rows[0][0]
+
+        self.record_full["LocalityName"] = (
+            barcodes.map(locality_names).astype("string")
+        )
+
+
+    def compare_locality_and_habitat(self):
+        """Compare shared phrases containing at least two consecutive words."""
+
+        def normalize(value):
+            if pd.isna(value):
+                return []
+
+            # Ignore case and punctuation while preserving word boundaries.
+            return re.findall(r"[^\W_]+", str(value).casefold())
+
+        def calculate_overlap(locality_words, habitat_words):
+            if not locality_words or not habitat_words:
+                return 0.0
+
+            matcher = SequenceMatcher(
+                None,
+                locality_words,
+                habitat_words,
+                autojunk=False,
+            )
+
+            # Count only matching phrases of two or more consecutive words.
+            matching_words = sum(
+                block.size
+                for block in matcher.get_matching_blocks()
+                if block.size >= 2
+            )
+
+            return (
+                2.0 * matching_words
+                / (len(locality_words) + len(habitat_words))
+            )
+
+        localities = self.record_full["LocalityName"].map(normalize)
+        habitats = self.record_full["Habitat"].map(normalize)
+
+        self.record_full["locality_habitat_overlap"] = [
+            calculate_overlap(locality, habitat)
+            for locality, habitat in zip(localities, habitats)
+        ]
+
+        self.record_full["locality_habitat_overlap_gt_20pct"] = (
+            self.record_full["locality_habitat_overlap"] > 0.20
+        )
 
     def clean_llamaframe(self):
 
@@ -714,6 +832,13 @@ class LlamaClean:
 
         self.parse_columns()
 
+        self.replace_locality_names_from_database()
+
+        # Also clean renamed/combined fields and values returned by the database.
+        self.clean_text_fields()
+
+        self.compare_locality_and_habitat()
+
         self.record_full.to_csv(output_path, index=False)
 
         logging.info(f"Cleaned CSV written to: {output_path}")
@@ -729,8 +854,11 @@ def parse_args():
 
     parser.add_argument("-hm", "--hemisphere", default="NorthWest",
                         choices=["NorthWest", "NorthEast", "SouthWest", "SouthEast"],
-                        help=("Default hemisphere for coordinates without explicit "
-                               "N, S, E, or W indicators. Default: NorthWest."))
+                        help="Default hemisphere for coordinates without explicit "
+                             "N, S, E, or W indicators. Default: NorthWest.")
+
+    parser.add_argument("-cfg", "--config", default="Botany_PIC", required=False,
+                        help="config file to retrieve for sql")
 
     return parser.parse_args()
 
@@ -738,4 +866,4 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    importer = LlamaClean(csv_path=args.csv_path, hemisphere=args.hemisphere)
+    importer = LlamaClean(csv_path=args.csv_path, hemisphere=args.hemisphere, config=args.config)

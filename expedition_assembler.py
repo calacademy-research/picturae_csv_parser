@@ -15,9 +15,9 @@ from get_configs import get_config
 
 class AssembleExpedition:
     def __init__(self, csv_name, destination=None):
-        self.csv_name = csv_name
         self.expedition_csv = pd.read_csv(os.path.join('nfn_csv', csv_name))
-        self.expedition_name = csv_name.replace(".csv", '')
+        self.csv_name = os.path.basename(csv_name)
+        self.expedition_name = os.path.splitext(self.csv_name)[0]
         self.sep = os.path.sep
         self.config = get_config(config="Botany_PIC")
         self.resized_prefix = self.config.RESIZED_PREFIX
@@ -64,15 +64,12 @@ class AssembleExpedition:
 
     def gather_images(self):
         """Copies image paths and CSV manifest to new expedition folder on drive."""
-        # Removing sheet prefix
-        self.expedition_csv['CsvBatch'] = self.expedition_csv['CsvBatch'].replace('^SHEET_', '', regex=True)
+        batches = self.expedition_csv['CsvBatch'].str.removeprefix('SHEET_')
 
-        # Combining image path prefix and jpg_path
-        self.expedition_csv['CsvBatch'] = self.expedition_csv['CsvBatch'].apply(
-            lambda x: "{}{}".format(self.resized_prefix, x))
-
-        self.expedition_csv['jpg_path'] = (self.expedition_csv['CsvBatch'] + f"{self.sep}resized_jpg" +
-                                           f"{self.sep}" + self.expedition_csv['jpg_path'])
+        self.expedition_csv['jpg_path'] = [
+            os.path.join(self.resized_prefix, batch, 'resized_jpg', jpg_path)
+            for batch, jpg_path in zip(batches, self.expedition_csv['jpg_path'])
+        ]
 
         self.expedition_csv = self.duplicate_resized_images(batch_csv=self.expedition_csv)
 
@@ -83,12 +80,15 @@ class AssembleExpedition:
                 self.logger.info(image_folder)
                 os.makedirs(image_folder)
 
-            final_path = os.path.join(image_folder, os.path.basename(row['jpg_path']))
-            if not os.path.exists(final_path):
-                shutil.copy(row['jpg_path'], final_path)
-                self.logger.info(f"Copying image at {row['jpg_path']} to {final_path}")
-            else:
-                self.logger.info(f"image already copied at destination {final_path}")
+            source = row["jpg_path"]
+            final_path = os.path.join(image_folder, os.path.basename(source))
+            if os.path.exists(final_path):
+                self.logger.info("Already present: %s", final_path)
+                continue
+
+            self.logger.info("Starting copy: %s -> %s", source, final_path)
+            shutil.copy(source, final_path)
+            self.logger.info("Finished copy: %s", final_path)
 
         csv_path = os.path.join(dest_folder, self.csv_name)
 

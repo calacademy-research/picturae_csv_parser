@@ -884,9 +884,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level.upper()))
+
+    log_levels = ("WARNING", "INFO", "DEBUG")
+    log_level = log_levels[min(args.verbose, len(log_levels) - 1)]
+    logging.basicConfig(level=log_level)
 
     picturae_csv_instance = NfnCsvCreate(coll=args.collection, input_file=args.input_file,
-                                         logging_level=args.log_level,
+                                         logging_level=log_level,
                                          hemisphere=args.hemisphere, model=args.model)
+
     picturae_csv_instance.run_all_methods()

@@ -36,9 +36,9 @@ class InvalidFilenameError(Exception):
 
 
 class CsvCreatePicturae:
-    def __init__(self, config, tnrs_ignore, logging_level, verify_region):
+    def __init__(self, config, taxon_ignore, logging_level, verify_region):
         # Keep the constructor argument name for existing callers.
-        self.taxon_ignore = str_to_bool(tnrs_ignore)
+        self.taxon_ignore = str_to_bool(taxon_ignore)
         self.verify_region = str_to_bool(verify_region)
         self.picturae_config = config
         self.specify_db_connection = SpecifyDb(self.picturae_config)
@@ -821,6 +821,9 @@ class CsvCreatePicturae:
 
         for key, csv_data in data_flag_dict.items():
 
+            if key == "missing_family":
+                continue
+
             if key == "missing_label":
                 continue
 
@@ -1449,6 +1452,34 @@ class CsvCreatePicturae:
         return gen_spec, full_name, first_intra, " ".join(tax_name.split())
 
 
+    def add_date_precision(self):
+        """Add nullable precision codes from the original date components.
+
+        Year only = 3, year/month = 2, and year/month/day = 1.
+        Empty dates and other incomplete combinations remain null.
+        """
+        for prefix in ("start", "end"):
+            date_col = f"{prefix}_date"
+            precision_col = f"{date_col}_precision"
+            has_year, has_month, has_day = [
+                ~self.record_full[f"{date_col}_{part}"]
+                .astype("string").str.strip().fillna("")
+                .isin(["", "nan", "None", "<NA>"])
+                for part in ("year", "month", "day")
+            ]
+
+            precision = pd.Series(pd.NA, index=self.record_full.index, dtype="Int64")
+            precision.loc[has_year & ~has_month & ~has_day] = 3
+            precision.loc[has_year & has_month & ~has_day] = 2
+            precision.loc[has_year & has_month & has_day] = 1
+
+            self.record_full.drop(columns=[precision_col], errors="ignore", inplace=True)
+            self.record_full.insert(
+                self.record_full.columns.get_loc(date_col) + 1,
+                precision_col,
+                precision,
+            )
+
     def col_clean(self):
         """parses and cleans dataframe columns until ready for upload.
             runs dependent function taxon concat
@@ -1533,6 +1564,9 @@ class CsvCreatePicturae:
         self.record_full = fill_empty_col(self.record_full, string_fill="[unspecified]", col_name="locality")
 
         self.record_full = fill_empty_col(self.record_full, string_fill="[No date on label]", col_name="verbatim_date")
+
+        # Run after string cleanup so precision remains nullable integers.
+        self.add_date_precision()
 
     def barcode_has_record(self):
         """check if barcode / catalog number already in collectionobject table"""
@@ -1851,11 +1885,14 @@ if __name__ == "__main__":
                         action='count')
 
     parser.add_argument(
-        "-t", "--taxon_ignore", "--tnrs_ignore", dest="taxon_ignore",
+        "-t", "--taxon_ignore", dest="taxon_ignore",
         nargs="?", const=True, default=False,
         help="True skips errors for taxa missing from the database; False flags them "
-             "(default: False). --tnrs_ignore is a compatibility alias."
+             "(default: False). --taxon_ignore is a compatibility alias."
     )
+
+    parser.add_argument("-f", "--family_ignore", action="store_true", default=False,
+                        help="Skip missing-family validation (checked by default)")
 
     parser.add_argument("-l", "--log_level", nargs="?",
                         default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -1869,4 +1906,5 @@ if __name__ == "__main__":
     pic_config = get_config("Botany_PIC")
 
     picturae_csv_instance = CsvCreatePicturae(config=pic_config, logging_level=args.log_level,
-                                              tnrs_ignore=args.taxon_ignore, verify_region=args.verify_region)
+                                              taxon_ignore=args.taxon_ignore, verify_region=args.verify_region)
+
